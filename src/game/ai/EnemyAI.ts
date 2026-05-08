@@ -1,6 +1,7 @@
 import { Scene, Vector3, Mesh, MeshBuilder, PhysicsAggregate, PhysicsShapeType, StandardMaterial, Color3, PhysicsMotionType, SceneLoader, AnimationGroup } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF';
 import { Game } from '../Game';
+import { GameState } from '../StateMachine';
 
 export class EnemyAI {
   private scene: Scene;
@@ -202,6 +203,10 @@ export class EnemyAI {
   private die() {
     this.isDead = true;
     console.log("Enemy Died!");
+
+    if (this.game.stateMachine.getState() === GameState.STATION) {
+      this.game.enemiesKilledStation++;
+    }
     
     this.playAnim("Death");
     

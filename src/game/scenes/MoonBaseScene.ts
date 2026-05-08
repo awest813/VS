@@ -6,6 +6,7 @@ import { GameState } from '../StateMachine';
 
 export class MoonBaseScene {
   private game: Game;
+  private triggeredStationReturn = false;
 
   constructor(game: Game) {
     this.game = game;
@@ -217,7 +218,8 @@ export class MoonBaseScene {
     scene.onBeforeRenderObservable.add(() => {
         if (this.game.player) {
             const dist = Vector3.Distance(this.game.player.mesh.position, extractZone.position);
-            if (dist < 3) {
+            if (!this.triggeredStationReturn && dist < 3) {
+                this.triggeredStationReturn = true;
                 console.log("Extracting back to Station...");
                 this.game.stateMachine.setState(GameState.STATION);
             }

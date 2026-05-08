@@ -18,6 +18,8 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [hoveredTarget, setHoveredTarget] = useState<string | null>(null);
   const [isShipUIOpen, setIsShipUIOpen] = useState<boolean>(false);
   const [money, setMoney] = useState<number>(0);
+  const [health, setHealth] = useState({ current: 100, max: 100 });
+  const [battery, setBattery] = useState({ current: 100, max: 100 });
 
   useEffect(() => {
     const loadStash = async () => {
@@ -50,6 +52,8 @@ const App: React.FC<AppProps> = ({ game }) => {
         if (game.player.inventory) {
           setInventory([...game.player.inventory]);
         }
+        setHealth({ current: game.player.health, max: game.player.maxHealth });
+        setBattery({ current: Math.round(game.player.battery), max: game.player.maxBattery });
         setHoveredTarget(game.player.hoveredInteractable || null);
       }
     }, 100);
@@ -65,6 +69,21 @@ const App: React.FC<AppProps> = ({ game }) => {
       window.removeEventListener('toggleShipUI', toggleUI);
     };
   }, [game]);
+
+  useEffect(() => {
+    if (gameState !== GameState.SHIP) return;
+    void (async () => {
+      const items = await db.stashItems.toArray();
+      setStash(items.filter((i) => i.slot === 'stash'));
+      setLoadout(items.filter((i) => i.slot === 'loadout'));
+      const allContracts = await db.contracts.toArray();
+      setContracts(allContracts);
+      const active = allContracts.find((c) => c.isActive);
+      setActiveContractId(active?.id ?? null);
+      const profile = await db.playerProfile.toCollection().first();
+      if (profile) setMoney(profile.money);
+    })();
+  }, [gameState]);
 
   const sellJunk = async () => {
     const junkTypes = { 'scrap_metal': 10, 'copper_wire': 25 };
@@ -105,11 +124,15 @@ const App: React.FC<AppProps> = ({ game }) => {
       await db.playerProfile.update(profile.id!, { money: profile.money - cost });
       
       // add item
-      const existing = await db.stashItems.where('itemId').equals(itemId).first();
-      if (existing && existing.slot === 'stash') {
-          await db.stashItems.update(existing.id!, { quantity: existing.quantity + quantity });
+      const existing = await db.stashItems
+        .where('itemId')
+        .equals(itemId)
+        .filter((s) => s.slot === 'stash')
+        .first();
+      if (existing) {
+        await db.stashItems.update(existing.id!, { quantity: existing.quantity + quantity });
       } else {
-          await db.stashItems.add({ itemId, quantity, slot: 'stash' });
+        await db.stashItems.add({ itemId, quantity, slot: 'stash' });
       }
       success = true;
     });
@@ -153,8 +176,8 @@ const App: React.FC<AppProps> = ({ game }) => {
             boxShadow: '0 0 5px rgba(0,0,0,0.5)'
           }} />
           {hoveredTarget && (
-            <div style={{ background: 'rgba(0,0,0,0.7)', padding: '5px 10px', borderRadius: '4px', fontSize: '14px', border: '1px solid #555' }}>
-              [E] INTERACT
+            <div style={{ background: 'rgba(0,0,0,0.7)', padding: '5px 10px', borderRadius: '4px', fontSize: '14px', border: '1px solid #555', whiteSpace: 'nowrap' }}>
+              [E] {hoveredTarget}
             </div>
           )}
         </div>
@@ -172,8 +195,13 @@ const App: React.FC<AppProps> = ({ game }) => {
             )}
           </div>
           <div style={{ background: 'rgba(0,0,0,0.5)', padding: '10px', border: '1px solid #444' }}>
-            <h2 style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>HEALTH: 100</h2>
+            <h2 style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>HEALTH</h2>
+            <h1 style={{ margin: 0, fontSize: '28px' }}>{health.current} / {health.max}</h1>
+            <h2 style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#888' }}>FLASHLIGHT</h2>
+            <p style={{ margin: 0, fontSize: '16px', color: '#9cf' }}>{battery.current}%</p>
+            <h2 style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#888' }}>AMMO</h2>
             <h1 style={{ margin: 0, fontSize: '32px' }}>{ammo.current} / {ammo.reserve}</h1>
+            <p style={{ margin: '8px 0 0 0', fontSize: '11px', color: '#666' }}>[H] use medkit</p>
           </div>
         </div>
       )}

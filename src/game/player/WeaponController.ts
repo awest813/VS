@@ -1,4 +1,4 @@
-import { Scene, Vector3, Mesh, MeshBuilder, StandardMaterial, Color3, Animation, QuadraticEase, EasingFunction, PointerEventTypes, Sound } from '@babylonjs/core';
+import { Scene, Vector3, Mesh, MeshBuilder, StandardMaterial, Color3, Animation, QuadraticEase, EasingFunction, PointerEventTypes, Sound, Ray, Observer, PointerInfo } from '@babylonjs/core';
 import { Game } from '../Game';
 import { HitScan } from '../combat/HitScan';
 
@@ -20,6 +20,10 @@ export class WeaponController {
   
   private weaponMesh: Mesh | null = null;
   private fireSound: Sound | null = null;
+  private pointerObserver: Observer<PointerInfo> | null = null;
+  private onReloadKeyDown = (e: KeyboardEvent) => {
+    if (e.code === 'KeyR') this.reload();
+  };
 
   constructor(game: Game, scene: Scene, camera: any, weaponType: string = 'rifle_01', weaponStats: any = null) {
     this.game = game;
@@ -35,6 +39,14 @@ export class WeaponController {
 
     this.scene.onBeforeRenderObservable.add(() => {
         this.updateWeaponPosition();
+    });
+
+    this.scene.onDisposeObservable.add(() => {
+      if (this.pointerObserver) {
+        this.scene.onPointerObservable.remove(this.pointerObserver);
+        this.pointerObserver = null;
+      }
+      window.removeEventListener('keydown', this.onReloadKeyDown);
     });
   }
 
@@ -85,7 +97,7 @@ export class WeaponController {
   }
 
   private setupInput() {
-    this.scene.onPointerObservable.add((pointerInfo) => {
+    this.pointerObserver = this.scene.onPointerObservable.add((pointerInfo) => {
       if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
         if (pointerInfo.event.button === 0) {
           this.startFiring();
@@ -93,9 +105,7 @@ export class WeaponController {
       }
     });
 
-    window.addEventListener("keydown", (e) => {
-      if (e.code === "KeyR") this.reload();
-    });
+    window.addEventListener('keydown', this.onReloadKeyDown);
   }
 
   private startFiring() {
