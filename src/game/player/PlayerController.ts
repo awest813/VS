@@ -103,38 +103,89 @@ export class PlayerController {
     let equippedWeapon = 'rifle_01'; // Default
     let equippedStats: any = null;
 
-    for (const item of loadoutItems) {
+    const staging = !this.game.loadoutStagingApplied;
+    if (staging) {
+      for (const item of loadoutItems) {
         if (item.itemId === 'ammo_9mm') {
-            // Wait, we need the weapon to exist first.
-        } else if (item.itemId === 'medkit') {
-            // We can add it to our active inventory to use later
-            this.inventory.push({ itemId: item.itemId, quantity: item.quantity });
-        } else if (item.itemId === 'shotgun_01' || item.itemId === 'pulse_rifle' || item.itemId === 'rifle_01') {
-            equippedWeapon = item.itemId;
-            equippedStats = item.stats || null;
+          continue;
         }
+        if (item.itemId === 'medkit') {
+          this.inventory.push({ itemId: item.itemId, quantity: item.quantity });
+        } else if (item.itemId === 'shotgun_01' || item.itemId === 'pulse_rifle' || item.itemId === 'rifle_01') {
+          equippedWeapon = item.itemId;
+          equippedStats = item.stats || null;
+        }
+      }
+      this.game.loadoutStagingApplied = true;
+    } else {
+      for (const item of loadoutItems) {
+        if (item.itemId === 'shotgun_01' || item.itemId === 'pulse_rifle' || item.itemId === 'rifle_01') {
+          equippedWeapon = item.itemId;
+          equippedStats = item.stats || null;
+          break;
+        }
+      }
     }
 
-    // Initialize weapon now that we know what is equipped
     this.weapon = new WeaponController(this.game, this.scene, this.camera, equippedWeapon, equippedStats);
 
-    // Now apply ammo
-    for (const item of loadoutItems) {
+    if (staging) {
+      for (const item of loadoutItems) {
         if (item.itemId === 'ammo_9mm') {
-            this.weapon.reserveAmmo += item.quantity;
+          this.weapon.reserveAmmo += item.quantity;
         }
+      }
+    }
+
+    const preserved = this.game.preservedPlayerState;
+    if (preserved) {
+      this.health = preserved.health;
+      this.maxHealth = preserved.maxHealth;
+      this.battery = preserved.battery;
+      this.maxBattery = preserved.maxBattery;
+      this.flashlightOn = preserved.flashlightOn;
+      this.flashlight.intensity =
+        this.flashlightOn && this.battery > 0 ? (this.battery / this.maxBattery) * 2.0 : 0;
+      this.weapon.currentAmmo = Math.max(0, Math.min(preserved.currentAmmo, this.weapon.maxAmmo));
+      this.weapon.reserveAmmo = Math.max(0, preserved.reserveAmmo);
+      this.game.preservedPlayerState = null;
     }
   }
 
+  private onWindowKeyDown = (e: KeyboardEvent) => {
+    this.inputMap[e.code] = true;
+    if (e.code === 'KeyF') {
+      this.flashlightOn = !this.flashlightOn;
+    }
+    if (e.code === 'KeyH') {
+      this.tryUseMedkit();
+    }
+  };
+
+  private onWindowKeyUp = (e: KeyboardEvent) => {
+    this.inputMap[e.code] = false;
+  };
+
+  private tryUseMedkit() {
+    if (this.health >= this.maxHealth) return;
+    const inv = this.game.raidInventory;
+    const idx = inv.findIndex((i) => i.itemId === 'medkit' && i.quantity > 0);
+    if (idx < 0) return;
+    const stack = inv[idx];
+    stack.quantity -= 1;
+    if (stack.quantity <= 0) {
+      inv.splice(idx, 1);
+    }
+    this.health = Math.min(this.maxHealth, this.health + 50);
+  }
+
   private setupInput() {
-    window.addEventListener("keydown", (e) => {
-        this.inputMap[e.code] = true;
-        // Toggle Flashlight
-        if (e.code === "KeyF") {
-            this.flashlightOn = !this.flashlightOn;
-        }
+    this.scene.onDisposeObservable.add(() => {
+      window.removeEventListener('keydown', this.onWindowKeyDown);
+      window.removeEventListener('keyup', this.onWindowKeyUp);
     });
-    window.addEventListener("keyup", (e) => this.inputMap[e.code] = false);
+    window.addEventListener('keydown', this.onWindowKeyDown);
+    window.addEventListener('keyup', this.onWindowKeyUp);
 
     this.scene.onPointerDown = () => {
       if (!this.game.engine.isPointerLock) {

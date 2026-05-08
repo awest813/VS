@@ -22,5 +22,15 @@
   },
   "include": [
     "src"
+  ],
+  "exclude": [
+    "src/site",
+    "src/index.js",
+    "src/serviceWorker.js",
+    "src/setupTests.js",
+    "src/game/Scene1.ts",
+    "src/game/FPSController.ts",
+    "src/game/RoomFactory.ts",
+    "src/game/PBRMaterialFactory.ts"
   ]
 }

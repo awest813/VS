@@ -2,11 +2,15 @@ import { Scene, Vector3, PointLight, MeshBuilder, Color4, HemisphericLight, Phys
 import { Game } from '../Game';
 import { PlayerController } from '../player/PlayerController';
 import { GameState } from '../StateMachine';
-import { db } from '../persistence/SaveDB';
+import { db, type Contract } from '../persistence/SaveDB';
+import { mergeAmmoForShipExtract } from '../persistence/raidExtract';
 import { EnemyAI } from '../ai/EnemyAI';
+
+const STATION_HOSTILES_FOR_DEBRIS_CONTRACT = 2;
 
 export class StationScene {
   private game: Game;
+  private descendingToMoon = false;
 
   constructor(game: Game) {
     this.game = game;
@@ -88,68 +92,98 @@ export class StationScene {
         if (this.game.player) {
             const playerPos = this.game.player.mesh.position;
             // To Moon Base
-            if (Vector3.Distance(playerPos, elevator.position) < 3) {
+            if (!this.descendingToMoon && Vector3.Distance(playerPos, elevator.position) < 3) {
+                this.descendingToMoon = true;
                 console.log("Descending to Moon Base...");
                 this.game.stateMachine.setState(GameState.MOON_BASE);
             }
             // To Ship
             if (Vector3.Distance(playerPos, returnZone.position) < 3) {
+                if (this.game.stationExtractPending) return;
+                this.game.stationExtractPending = true;
                 console.log("Extracting to Ship...");
-                
-                // Save inventory to Stash and Check Contracts
-                const inventory = this.game.player.inventory;
-                
-                // Add remaining ammo back to stash
-                if (this.game.player.weapon && this.game.player.weapon.reserveAmmo > 0) {
-                    inventory.push({ itemId: 'ammo_9mm', quantity: this.game.player.weapon.reserveAmmo });
-                }
 
-                if (inventory.length > 0) {
-                    db.transaction('rw', db.stashItems, db.contracts, async () => {
-                        // Save items
-                        for (const item of inventory) {
-                            if (item.stats) {
-                                // Do not stack items with unique stats
-                                await db.stashItems.add({ itemId: item.itemId, quantity: item.quantity, slot: 'stash', stats: item.stats });
-                            } else {
-                                const existing = await db.stashItems.where('itemId').equals(item.itemId).first();
-                                // Only stack if existing item also has no stats
-                                if (existing && !existing.stats) {
-                                    await db.stashItems.update(existing.id!, { quantity: existing.quantity + item.quantity });
+                const weapon = this.game.player.weapon;
+                let inventory = mergeAmmoForShipExtract(
+                  [...this.game.player.inventory],
+                  weapon?.currentAmmo ?? 0,
+                  weapon?.reserveAmmo ?? 0
+                );
+
+                void (async () => {
+                    try {
+                        await db.transaction('rw', db.stashItems, db.contracts, db.playerProfile, async () => {
+                            for (const item of inventory) {
+                                if (item.stats) {
+                                    await db.stashItems.add({
+                                        itemId: item.itemId,
+                                        quantity: item.quantity,
+                                        slot: 'stash',
+                                        stats: item.stats,
+                                    });
                                 } else {
-                                    await db.stashItems.add({ itemId: item.itemId, quantity: item.quantity, slot: 'stash' });
+                                    const existing = await db.stashItems
+                                        .where('itemId')
+                                        .equals(item.itemId)
+                                        .filter((row) => row.slot === 'stash' && !row.stats)
+                                        .first();
+                                    if (existing) {
+                                        await db.stashItems.update(existing.id!, {
+                                            quantity: existing.quantity + item.quantity,
+                                        });
+                                    } else {
+                                        await db.stashItems.add({
+                                            itemId: item.itemId,
+                                            quantity: item.quantity,
+                                            slot: 'stash',
+                                        });
+                                    }
                                 }
                             }
-                        }
-                        
-                        // Check active contract
-                        const activeContract = await db.contracts.where('isActive').equals('true').first() || 
-                                              (await db.contracts.toArray()).find(c => c.isActive);
 
-                        if (activeContract && activeContract.title === 'Recover Survey Drive') {
-                            const hasDrive = inventory.find(i => i.itemId === 'survey_drive');
-                            if (hasDrive) {
-                                await db.contracts.update(activeContract.id!, { isCompleted: true, isActive: false });
-                                console.log("Contract Completed!");
-                                // Give reward
+                            const activeContract = (await db.contracts.toArray()).find((c) => c.isActive);
+
+                            const payContract = async (contract: Contract) => {
+                                if (contract.id === undefined) return;
+                                await db.contracts.update(contract.id, {
+                                    isCompleted: true,
+                                    isActive: false,
+                                });
+                                console.log('Contract Completed!');
                                 const profile = await db.playerProfile.toCollection().first();
                                 if (profile) {
-                                    await db.playerProfile.update(profile.id!, { money: profile.money + activeContract.reward });
+                                    await db.playerProfile.update(profile.id!, {
+                                        money: profile.money + contract.reward,
+                                    });
+                                }
+                            };
+
+                            if (activeContract?.title === 'Recover Survey Drive') {
+                                const hasDrive = inventory.find((i) => i.itemId === 'survey_drive');
+                                if (hasDrive) {
+                                    await payContract(activeContract);
                                 }
                             }
-                        }
-                        
-                        // Return all loadout items back to stash so they aren't lost
-                        const loadoutItems = await db.stashItems.where('slot').equals('loadout').toArray();
-                        for (const item of loadoutItems) {
-                            await db.stashItems.update(item.id!, { slot: 'stash' });
-                        }
-                    }).then(() => {
-                        console.log("Inventory saved to stash!");
-                    }).catch(err => console.error("Failed to save inventory", err));
-                }
 
-                this.game.stateMachine.setState(GameState.SHIP);
+                            if (activeContract?.title === 'Clear Station Debris') {
+                                if (this.game.enemiesKilledStation >= STATION_HOSTILES_FOR_DEBRIS_CONTRACT) {
+                                    await payContract(activeContract);
+                                }
+                            }
+
+                            const loadoutItems = await db.stashItems.where('slot').equals('loadout').toArray();
+                            for (const item of loadoutItems) {
+                                await db.stashItems.update(item.id!, { slot: 'stash' });
+                            }
+                        });
+                        console.log('Inventory saved to stash!');
+                    } catch (err) {
+                        console.error('Failed to save inventory', err);
+                    } finally {
+                        this.game.stationExtractPending = false;
+                        this.game.stateMachine.setState(GameState.SHIP);
+                    }
+                })();
             }
         }
     });

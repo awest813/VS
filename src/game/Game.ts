@@ -4,6 +4,17 @@ import Recast from 'recast-detour';
 import { StateMachine, GameState } from './StateMachine';
 import { db } from './persistence/SaveDB';
 
+/** Vitals and weapon ammo carried across station ↔ moon (and ship → first drop). Hub load clears this. */
+export interface PreservedPlayerState {
+  health: number;
+  maxHealth: number;
+  battery: number;
+  maxBattery: number;
+  flashlightOn: boolean;
+  currentAmmo: number;
+  reserveAmmo: number;
+}
+
 export class Game {
   public engine: Engine;
   public canvas: HTMLCanvasElement;
@@ -14,6 +25,13 @@ export class Game {
   public player: any = null; // Using any to avoid circular dependency for now
   
   public raidInventory: { itemId: string, quantity: number, stats?: any }[] = [];
+  /** False after leaving the ship until first loadout staging runs for this run. */
+  public loadoutStagingApplied = false;
+  public preservedPlayerState: PreservedPlayerState | null = null;
+  /** Prevents overlapping station→ship async extract + state changes. */
+  public stationExtractPending = false;
+  /** Hostiles killed while in the station (for “Clear Station Debris”); reset when docking from the ship. */
+  public enemiesKilledStation = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -40,9 +58,8 @@ export class Game {
     const recast = await Recast();
     this.navigationPlugin = new RecastJSPlugin(recast);
 
-    // Setup state listeners
-    this.stateMachine.onStateChange((newState) => {
-      this.handleStateChange(newState);
+    this.stateMachine.onStateChange((newState, oldState) => {
+      void this.handleStateChange(newState, oldState);
     });
 
     // Start with Ship
@@ -61,18 +78,40 @@ export class Game {
     });
   }
 
-  private async handleStateChange(state: GameState) {
+  private capturePlayerState() {
+    const p = this.player;
+    if (!p) return;
+    this.preservedPlayerState = {
+      health: p.health,
+      maxHealth: p.maxHealth,
+      battery: p.battery,
+      maxBattery: p.maxBattery,
+      flashlightOn: p.flashlightOn,
+      currentAmmo: p.weapon?.currentAmmo ?? 0,
+      reserveAmmo: p.weapon?.reserveAmmo ?? 0,
+    };
+  }
+
+  private async handleStateChange(state: GameState, previous?: GameState) {
     console.log(`Game State Changed to: ${GameState[state]}`);
-    
-    // Dispose old scene
+
+    if (state === GameState.STATION && previous === GameState.SHIP) {
+      this.enemiesKilledStation = 0;
+    }
+    if (state === GameState.STATION && previous === GameState.MOON_BASE) {
+      this.enemiesKilledStation = 0;
+    }
+
     if (this.activeScene) {
+      if (this.player) this.capturePlayerState();
       this.activeScene.dispose();
       this.activeScene = null;
     }
 
-    // Clear raid inventory if going back to ship (handled in extraction, but safety clear here)
     if (state === GameState.SHIP) {
       this.raidInventory = [];
+      this.loadoutStagingApplied = false;
+      this.preservedPlayerState = null;
     }
 
     switch (state) {
