@@ -4,7 +4,11 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Bunker Extraction | Single Player FPS</title>
+    <meta name="color-scheme" content="dark" />
+    <title>Void Sovereigns | Extraction FPS</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@450;550&display=swap" rel="stylesheet" />
     <style>
       body, html {
         margin: 0;
@@ -13,6 +17,7 @@
         height: 100%;
         overflow: hidden;
         background-color: #000;
+        color-scheme: dark;
       }
       canvas {
         position: absolute;
@@ -33,8 +38,94 @@
         z-index: 10;
         pointer-events: none;
       }
+      .ui-overlay button {
+        transition: transform 0.14s ease, filter 0.14s ease, box-shadow 0.14s ease;
+      }
+      .ui-overlay button:focus-visible {
+        outline: none;
+        box-shadow:
+          0 0 0 2px rgba(12, 16, 24, 0.95),
+          0 0 0 4px rgba(125, 211, 252, 0.75);
+      }
+      .ui-overlay [role='button']:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 2px rgba(125, 211, 252, 0.75);
+      }
+      .ui-overlay [role='dialog']:focus-visible {
+        outline: none;
+        box-shadow:
+          0 0 0 2px rgba(12, 16, 24, 0.95),
+          0 0 0 4px rgba(125, 211, 252, 0.45);
+      }
+      .ui-overlay button:active:not(:disabled) {
+        transform: scale(0.98);
+      }
+      .ui-card-interactive {
+        transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.12s ease;
+      }
+      .ui-card-interactive:hover {
+        border-color: rgba(180, 210, 255, 0.28) !important;
+        transform: translateY(-1px);
+      }
+      .ui-card-interactive:active {
+        transform: translateY(0);
+      }
+      .ops-grid {
+        display: flex;
+        gap: 20px;
+        margin-top: 36px;
+        text-align: left;
+        align-items: stretch;
+        flex-wrap: wrap;
+      }
+      .ops-grid > div {
+        flex: 1 1 220px;
+        min-width: 0;
+      }
+      .contract-desc {
+        overflow-y: auto;
+        max-height: 4.75em;
+      }
+      @media (max-width: 960px) {
+        .ops-grid {
+          flex-direction: column;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ui-overlay button,
+        .ui-card-interactive {
+          transition: none !important;
+        }
+        .ui-overlay button:active:not(:disabled) {
+          transform: none;
+        }
+      }
+      .ui-toast {
+        position: absolute;
+        bottom: 104px;
+        left: 50%;
+        transform: translateX(-50%);
+        pointer-events: none;
+        max-width: min(420px, calc(100vw - 48px));
+        animation: toast-in 0.22s ease;
+      }
+      @keyframes toast-in {
+        from {
+          opacity: 0;
+          transform: translateX(-50%) translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(-50%) translateY(0);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ui-toast {
+          animation: none;
+        }
+      }
     </style>
-    <script type="module" crossorigin src="/assets/index-CiHd8LdX.js"></script>
+    <script type="module" crossorigin src="/assets/index-CZpHu6Y5.js"></script>
   </head>
   <body>
     <div id="root"></div>

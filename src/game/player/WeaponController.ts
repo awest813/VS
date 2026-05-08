@@ -1,44 +1,67 @@
-import { Scene, Vector3, Mesh, MeshBuilder, StandardMaterial, Color3, Animation, QuadraticEase, EasingFunction, PointerEventTypes, Sound, Ray, Observer, PointerInfo } from '@babylonjs/core';
+import { Scene, Vector3, Mesh, MeshBuilder, Color3, StandardMaterial, PointerEventTypes, Sound, Ray, Observer, PointerInfo, Camera, PBRMaterial } from '@babylonjs/core';
 import { Game } from '../Game';
 import { HitScan } from '../combat/HitScan';
+import { GameState } from '../StateMachine';
+import {
+  applyWeaponLootMods,
+  computeReloadTransfer,
+  getWeaponArchetype,
+  type WeaponLootMods,
+} from '../weapons/weaponDefinitions';
+import { AudioMix, BabylonPlaygroundSound } from '../audio/babylonPlaygroundSounds';
 
 export class WeaponController {
   private scene: Scene;
   private game: Game;
-  private camera: Mesh; // The player camera/head
-  
+  private camera: Camera;
+
   public currentAmmo: number = 30;
   public maxAmmo: number = 30;
   public reserveAmmo: number = 0;
   public isReloading: boolean = false;
-  
-  private fireRate: number = 150; // ms
+
+  /** Stash/loadout weapon id (`rifle_01`, …) */
+  public readonly weaponItemId: string;
+
+  private fireRate: number = 150;
   private lastFireTime: number = 0;
   private damage: number = 25;
-  private weaponType: string = 'rifle_01';
-  private weaponStats: any = null;
-  
+  private pelletCount = 1;
+  private pelletSpread = 0;
+  private hitscanRange = 100;
+  private reloadDurationMs = 1800;
+  private reloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private weaponStats: WeaponLootMods | null = null;
+  private recoilScale = 1;
+
   private weaponMesh: Mesh | null = null;
   private fireSound: Sound | null = null;
+  private reloadStartSound: Sound | null = null;
+  private reloadChamberSound: Sound | null = null;
   private pointerObserver: Observer<PointerInfo> | null = null;
   private onReloadKeyDown = (e: KeyboardEvent) => {
-    if (e.code === 'KeyR') this.reload();
+    if (e.code === 'KeyR' && this.game.stateMachine.getState() !== GameState.SHIP) {
+      this.reload();
+    }
   };
 
-  constructor(game: Game, scene: Scene, camera: any, weaponType: string = 'rifle_01', weaponStats: any = null) {
+  constructor(game: Game, scene: Scene, camera: Camera, weaponItemId: string = 'rifle_01', weaponStats: WeaponLootMods | null = null) {
     this.game = game;
     this.scene = scene;
     this.camera = camera;
-    this.weaponType = weaponType;
+    this.weaponItemId = weaponItemId;
     this.weaponStats = weaponStats;
-    
+
     this.applyWeaponStats();
 
     this.createWeaponMesh();
     this.setupInput();
 
     this.scene.onBeforeRenderObservable.add(() => {
-        this.updateWeaponPosition();
+      this.updateWeaponPosition();
+      if (this.weaponMesh) {
+        this.weaponMesh.isVisible = this.game.stateMachine.getState() !== GameState.SHIP;
+      }
     });
 
     this.scene.onDisposeObservable.add(() => {
@@ -46,54 +69,76 @@ export class WeaponController {
         this.scene.onPointerObservable.remove(this.pointerObserver);
         this.pointerObserver = null;
       }
+      if (this.reloadTimer) {
+        clearTimeout(this.reloadTimer);
+        this.reloadTimer = null;
+      }
       window.removeEventListener('keydown', this.onReloadKeyDown);
+      this.fireSound?.dispose();
+      this.fireSound = null;
+      this.reloadStartSound?.dispose();
+      this.reloadStartSound = null;
+      this.reloadChamberSound?.dispose();
+      this.reloadChamberSound = null;
     });
   }
 
   private applyWeaponStats() {
-    switch (this.weaponType) {
-        case 'shotgun_01':
-            this.maxAmmo = 8;
-            this.currentAmmo = 8;
-            this.fireRate = 800;
-            this.damage = 15; // per pellet
-            break;
-        case 'pulse_rifle':
-            this.maxAmmo = 60;
-            this.currentAmmo = 60;
-            this.fireRate = 80;
-            this.damage = 12;
-            break;
-        case 'rifle_01':
-        default:
-            this.maxAmmo = 30;
-            this.currentAmmo = 30;
-            this.fireRate = 150;
-            this.damage = 25;
-            break;
-    }
+    const archetype = getWeaponArchetype(this.weaponItemId);
+    this.maxAmmo = archetype.magazineSize;
+    this.currentAmmo = archetype.magazineSize;
+    this.pelletCount = archetype.pelletCount;
+    this.pelletSpread = archetype.spread;
+    this.hitscanRange = archetype.hitscanRange;
+    this.reloadDurationMs = archetype.reloadDurationMs;
 
-    if (this.weaponStats) {
-        if (this.weaponStats.damageMod) this.damage *= this.weaponStats.damageMod;
-        if (this.weaponStats.fireRateMod) this.fireRate *= this.weaponStats.fireRateMod;
-    }
+    const mod = applyWeaponLootMods(archetype, this.weaponStats);
+    this.damage = mod.damage;
+    this.fireRate = mod.fireRateMs;
+    this.recoilScale = archetype.recoilScale;
   }
 
   private createWeaponMesh() {
-    // Placeholder rifle mesh
-    this.weaponMesh = MeshBuilder.CreateBox("rifle", { width: 0.1, height: 0.1, depth: 0.5 }, this.scene);
+    const arch = getWeaponArchetype(this.weaponItemId);
+    const { width, height, depth } = arch.viewportMesh;
+    this.weaponMesh = MeshBuilder.CreateBox('primaryWeapon', { width, height, depth }, this.scene);
     this.weaponMesh.parent = this.camera;
     this.weaponMesh.position.set(0.2, -0.2, 0.4);
-    
-    const mat = new StandardMaterial("rifleMat", this.scene);
-    mat.diffuseColor = new Color3(0.2, 0.2, 0.2);
+
+    const mat = new PBRMaterial('weaponFrame', this.scene);
+    mat.albedoColor = new Color3(...arch.viewportTintRgb);
+    mat.metallic = 0.92;
+    mat.roughness = 0.38;
+    mat.emissiveColor = new Color3(...arch.viewportEmissiveRgb);
     this.weaponMesh.material = mat;
 
-    this.fireSound = new Sound("fire", "https://raw.githubusercontent.com/BabylonJS/Babylon.js/master/packages/tools/playground/public/sounds/gunshot.wav", this.scene, null, {
-        spatialSound: true,
-        maxDistance: 100
-    });
+    const spatialOpts = {
+      loop: false,
+      autoplay: false,
+      spatialSound: true,
+      distanceModel: 'exponential' as const,
+      maxDistance: 100,
+    };
+    this.fireSound = new Sound('fire', BabylonPlaygroundSound.gunshot, this.scene, null, spatialOpts);
     this.fireSound.attachToMesh(this.weaponMesh);
+
+    this.reloadStartSound = new Sound(
+      'reloadStart',
+      AudioMix.reloadStartSrc,
+      this.scene,
+      null,
+      spatialOpts
+    );
+    this.reloadStartSound.attachToMesh(this.weaponMesh);
+
+    this.reloadChamberSound = new Sound(
+      'reloadChamber',
+      AudioMix.reloadChamberSrc,
+      this.scene,
+      null,
+      spatialOpts
+    );
+    this.reloadChamberSound.attachToMesh(this.weaponMesh);
   }
 
   private setupInput() {
@@ -109,6 +154,7 @@ export class WeaponController {
   }
 
   private startFiring() {
+    if (this.game.stateMachine.getState() === GameState.SHIP) return;
     const now = Date.now();
     if (now - this.lastFireTime >= this.fireRate && this.currentAmmo > 0 && !this.isReloading) {
       this.fire();
@@ -118,29 +164,33 @@ export class WeaponController {
 
   private fire() {
     this.currentAmmo--;
-    console.log(`Fired! Ammo: ${this.currentAmmo}/${this.reserveAmmo}`);
 
     if (this.fireSound) {
-        this.fireSound.setPlaybackRate(1.2 + Math.random() * 0.2); // slight pitch variation
-        this.fireSound.play();
+      this.fireSound.setVolume(AudioMix.weaponFireVolume);
+      this.fireSound.setPlaybackRate(
+        AudioMix.weaponFireRateMin + Math.random() * AudioMix.weaponFireRateSpan
+      );
+      this.fireSound.play();
     }
 
-    // Raycast from camera
-    const ray = this.scene.activeCamera!.getForwardRay();
+    const ray = this.camera.getForwardRay();
     
-    if (this.weaponType === 'shotgun_01') {
-        // Fire 6 pellets with spread
-        for (let i = 0; i < 6; i++) {
-            const spreadRay = new Ray(ray.origin, new Vector3(
-                ray.direction.x + (Math.random() - 0.5) * 0.1,
-                ray.direction.y + (Math.random() - 0.5) * 0.1,
-                ray.direction.z + (Math.random() - 0.5) * 0.1
-            ).normalize());
-            this.processHit(spreadRay);
-        }
+    if (this.pelletCount > 1) {
+      const spread = this.pelletSpread;
+      for (let i = 0; i < this.pelletCount; i++) {
+        const spreadRay = new Ray(
+          ray.origin,
+          new Vector3(
+            ray.direction.x + (Math.random() - 0.5) * spread,
+            ray.direction.y + (Math.random() - 0.5) * spread,
+            ray.direction.z + (Math.random() - 0.5) * spread
+          ).normalize(),
+          this.hitscanRange
+        );
+        this.processHit(spreadRay);
+      }
     } else {
-        // Normal single ray
-        this.processHit(ray);
+      this.processHit(new Ray(ray.origin, ray.direction, this.hitscanRange));
     }
 
     // Recoil animation
@@ -148,11 +198,9 @@ export class WeaponController {
   }
 
   private processHit(ray: Ray) {
-    const result = HitScan.fireRay(this.scene, ray.origin, ray.direction);
+    const result = HitScan.fireRay(this.scene, ray.origin, ray.direction, this.hitscanRange);
 
     if (result.hit) {
-      console.log("Hit:", result.pickedMesh?.name);
-      
       // Damage logic
       if (result.pickedMesh?.metadata?.onHit) {
         result.pickedMesh.metadata.onHit(this.damage);
@@ -175,11 +223,11 @@ export class WeaponController {
 
   private applyRecoil() {
     if (!this.weaponMesh) return;
-    
-    // Kickback
-    this.weaponMesh.position.z -= 0.1;
-    this.weaponMesh.position.y += 0.02;
-    this.weaponMesh.rotation.x -= 0.05;
+
+    const k = this.recoilScale;
+    this.weaponMesh.position.z -= 0.1 * k;
+    this.weaponMesh.position.y += 0.02 * k;
+    this.weaponMesh.rotation.x -= 0.05 * k;
   }
 
   private updateWeaponPosition() {
@@ -199,17 +247,32 @@ export class WeaponController {
 
   public reload() {
     if (this.isReloading || this.currentAmmo === this.maxAmmo || this.reserveAmmo <= 0) return;
-    
-    console.log("Reloading...");
+
+    console.log('Reloading...');
     this.isReloading = true;
-    
-    setTimeout(() => {
-      const needed = this.maxAmmo - this.currentAmmo;
-      const toReload = Math.min(needed, this.reserveAmmo);
-      this.currentAmmo += toReload;
-      this.reserveAmmo -= toReload;
+    if (this.reloadTimer) clearTimeout(this.reloadTimer);
+
+    if (this.reloadStartSound) {
+      this.reloadStartSound.setVolume(AudioMix.reloadVolume);
+      this.reloadStartSound.setPlaybackRate(
+        AudioMix.reloadRateMin + Math.random() * AudioMix.reloadRateSpan
+      );
+      this.reloadStartSound.play();
+    }
+
+    this.reloadTimer = setTimeout(() => {
+      if (this.reloadChamberSound) {
+        this.reloadChamberSound.setVolume(AudioMix.reloadChamberVolume);
+        this.reloadChamberSound.setPlaybackRate(
+          AudioMix.reloadChamberRateMin + Math.random() * AudioMix.reloadChamberRateSpan
+        );
+        this.reloadChamberSound.play();
+      }
+      const { newMag, newReserve } = computeReloadTransfer(this.currentAmmo, this.maxAmmo, this.reserveAmmo);
+      this.currentAmmo = newMag;
+      this.reserveAmmo = newReserve;
       this.isReloading = false;
-      console.log("Reloaded!");
-    }, 1800); // 1.8s reload
+      this.reloadTimer = null;
+    }, this.reloadDurationMs);
   }
 }

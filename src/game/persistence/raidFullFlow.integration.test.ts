@@ -1,0 +1,127 @@
+/**
+ * IndexedDB-backed integration path: mimics docking prep → raid backpack → station green extract payout.
+ * Depends on fake-indexeddb (vitest.setup.ts).
+ */
+import { describe, expect, it, beforeEach } from 'vitest';
+import { db } from './SaveDB';
+import { mergeAmmoForShipExtract } from './raidExtract';
+import { persistStationRaidExtract } from './stationRaidPersist';
+import {
+  STATION_DEBRIS_CONTRACT_TITLE,
+  STATION_DEBRIS_KILLS_REQUIRED,
+  SURVEY_DRIVE_CONTRACT_TITLE,
+} from '../contracts/contractRules';
+
+async function wipeAndSeed() {
+  await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
+    await db.playerProfile.clear();
+    await db.stashItems.clear();
+    await db.contracts.clear();
+  });
+  await db.initializeDefault();
+}
+
+async function setActiveContractByTitle(title: string) {
+  await db.contracts.toCollection().modify({ isActive: false });
+  const c = (await db.contracts.toArray()).find((row) => row.title === title);
+  if (c?.id === undefined) throw new Error(`Missing contract: ${title}`);
+  await db.contracts.update(c.id, { isActive: true });
+}
+
+async function profileMoney(): Promise<number> {
+  const p = await db.playerProfile.toCollection().first();
+  if (!p?.id) throw new Error('no profile');
+  return p.money;
+}
+
+describe('Raid full flow (integration)', () => {
+  beforeEach(async () => {
+    await wipeAndSeed();
+  });
+
+  it('from fresh save: staged loadout merges to stash on extract without active contract payout', async () => {
+    const rifle = await db.stashItems.where('itemId').equals('rifle_01').first();
+    const ammoRow = await db.stashItems.where('itemId').equals('ammo_9mm').first();
+    expect(rifle?.id).toBeDefined();
+    await db.stashItems.update(rifle!.id!, { slot: 'loadout' });
+    await db.stashItems.update(ammoRow!.id!, { slot: 'loadout', quantity: 30 });
+
+    const moneyBefore = await profileMoney();
+    const inventory = mergeAmmoForShipExtract([{ itemId: 'scrap_metal', quantity: 2 }], 12, 48);
+
+    await persistStationRaidExtract({
+      inventory,
+      stationKillsSinceDock: 0,
+    });
+
+    expect(await profileMoney()).toBe(moneyBefore);
+    const loadoutCount = await db.stashItems.where('slot').equals('loadout').count();
+    expect(loadoutCount).toBe(0);
+
+    const scrap = await db.stashItems
+      .where('itemId')
+      .equals('scrap_metal')
+      .filter((r) => r.slot === 'stash' && !r.stats)
+      .first();
+    expect(scrap?.quantity).toBe(2);
+
+    const ammoStash = await db.stashItems
+      .where('itemId')
+      .equals('ammo_9mm')
+      .filter((r) => r.slot === 'stash' && !r.stats)
+      .toArray();
+    const ammoQty = ammoStash.reduce((s, r) => s + r.quantity, 0);
+    /** Loadout-held reserve (30) + merged mag/reserve extract (60) after demotion = 90 */
+    expect(ammoQty).toBeGreaterThanOrEqual(90);
+  });
+
+  it('survey drive raid: extract pays active contract when drive is in merged raid inventory', async () => {
+    await setActiveContractByTitle(SURVEY_DRIVE_CONTRACT_TITLE);
+
+    const moneyBefore = await profileMoney();
+    const inventory = mergeAmmoForShipExtract([{ itemId: 'survey_drive', quantity: 1 }], 0, 0);
+
+    await persistStationRaidExtract({
+      inventory,
+      stationKillsSinceDock: 0,
+    });
+
+    expect(await profileMoney()).toBe(moneyBefore + 750);
+
+    const done = (await db.contracts.toArray()).find((row) => row.title === SURVEY_DRIVE_CONTRACT_TITLE);
+    expect(done?.isCompleted).toBe(true);
+    expect(done?.isActive).toBe(false);
+
+    const driveInStash = await db.stashItems
+      .where('itemId')
+      .equals('survey_drive')
+      .filter((r) => r.slot === 'stash')
+      .first();
+    expect(driveInStash?.quantity).toBe(1);
+  });
+
+  it('station debris raid: payout when kill threshold met; no payout below threshold', async () => {
+    await setActiveContractByTitle(STATION_DEBRIS_CONTRACT_TITLE);
+
+    const moneyBefore = await profileMoney();
+
+    await persistStationRaidExtract({
+      inventory: mergeAmmoForShipExtract([], 0, 0),
+      stationKillsSinceDock: STATION_DEBRIS_KILLS_REQUIRED - 1,
+    });
+    expect(await profileMoney()).toBe(moneyBefore);
+    let c = (await db.contracts.toArray()).find((row) => row.title === STATION_DEBRIS_CONTRACT_TITLE);
+    expect(c?.isCompleted).toBe(false);
+
+    await wipeAndSeed();
+    await setActiveContractByTitle(STATION_DEBRIS_CONTRACT_TITLE);
+    await persistStationRaidExtract({
+      inventory: mergeAmmoForShipExtract([], 0, 0),
+      stationKillsSinceDock: STATION_DEBRIS_KILLS_REQUIRED,
+    });
+
+    expect(await profileMoney()).toBe(moneyBefore + 300);
+    c = (await db.contracts.toArray()).find((row) => row.title === STATION_DEBRIS_CONTRACT_TITLE);
+    expect(c?.isCompleted).toBe(true);
+  });
+});

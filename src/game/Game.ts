@@ -24,6 +24,7 @@ export class Game {
   public navigationPlugin: RecastJSPlugin | null = null;
   public player: any = null; // Using any to avoid circular dependency for now
   
+  /** In-raid backpack only — forfeited on death; persists across station ↔ moon; saved to Dexie stash on extract (see scenes). Not “yours” until successful extract pipeline. */
   public raidInventory: { itemId: string, quantity: number, stats?: any }[] = [];
   /** False after leaving the ship until first loadout staging runs for this run. */
   public loadoutStagingApplied = false;
@@ -32,6 +33,13 @@ export class Game {
   public stationExtractPending = false;
   /** Hostiles killed while in the station (for “Clear Station Debris”); reset when docking from the ship. */
   public enemiesKilledStation = 0;
+
+  /** Station/moon scenes set each frame — dims fills + tightens AI via `EnemyAI`. */
+  public raidEnvironmentalSurge = false;
+  /** Concussive gadget slowfield — hostiles inside radius respect until timestamp. */
+  public raidGadgetSlowUntil = 0;
+  /** Hard cooldown gate for `PlayerController` gadget (persists across station ↔ moon). */
+  public raidGadgetReadyAtMs = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -112,6 +120,9 @@ export class Game {
       this.raidInventory = [];
       this.loadoutStagingApplied = false;
       this.preservedPlayerState = null;
+      this.raidEnvironmentalSurge = false;
+      this.raidGadgetSlowUntil = 0;
+      this.raidGadgetReadyAtMs = 0;
     }
 
     switch (state) {
