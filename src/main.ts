@@ -39,6 +39,7 @@ window.render_game_to_text = () =>
     stationExtractPending: gameInstance.stationExtractPending,
     stationKills: gameInstance.enemiesKilledStation,
     health: gameInstance.player?.health ?? null,
+    weaponItemId: gameInstance.player?.weapon?.weaponItemId ?? null,
     weaponReserve: gameInstance.player?.weapon?.reserveAmmo ?? null,
   });
 

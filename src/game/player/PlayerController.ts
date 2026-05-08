@@ -2,6 +2,18 @@ import { Scene, Vector3, Mesh, MeshBuilder, FreeCamera, PhysicsAggregate, Physic
 import { Game } from '../Game';
 import { WeaponController } from './WeaponController';
 import { db } from '../persistence/SaveDB';
+import { GameState } from '../StateMachine';
+import { isInteractableTarget } from '../hub/interactionRay';
+import { isPrimaryWeaponItemId } from '../weapons/weaponDefinitions';
+import { doom3HandLight, flashlightOutputIntensity } from '../level/idTech4Inspired';
+import {
+  RAID_GADGET_COOLDOWN_MS,
+  RAID_GADGET_SLOW_DURATION_MS,
+} from '../raid/raidGadget';
+import { AudioMix, BabylonPlaygroundSound } from '../audio/babylonPlaygroundSounds';
+
+/** Shared with HUD cooldown bar — keep one source of truth. */
+export const RAID_MEDKIT_COOLDOWN_MS = 9000;
 
 export class PlayerController {
   private scene: Scene;
@@ -28,7 +40,15 @@ export class PlayerController {
 
   // Audio
   private footstepSound: Sound;
+  private jumpSound: Sound;
+  private uiBlipSound: Sound;
   private lastFootstepTime: number = 0;
+  private lastJumpSoundAt = 0;
+  /** Nearest-ground metadata `surfaceSound` from static brush picks (Tech-4-ish material hooks). */
+  private groundSurfaceSound = 'generic';
+
+  /** Halo/D-style pacing — medkit is a rotation, not a panic mash. */
+  private medkitReadyAtMs = 0;
 
   private moveSpeed = 5;
   private sprintMultiplier = 1.6;
@@ -70,21 +90,28 @@ export class PlayerController {
     // Flashlight
     this.flashlight = new PointLight("flashlight", new Vector3(0, 0, 0), scene);
     this.flashlight.parent = this.camera;
-    this.flashlight.intensity = 2.0;
-    this.flashlight.range = 40;
+    this.flashlight.intensity = doom3HandLight.intensityAtFullBattery;
+    this.flashlight.range = doom3HandLight.range;
     
-    // Footstep Sound (Spatial)
-    this.footstepSound = new Sound("footstep", "https://raw.githubusercontent.com/BabylonJS/Babylon.js/master/packages/tools/playground/public/sounds/gunshot.wav", scene, null, {
+    const spatialOpts = {
       loop: false,
       autoplay: false,
       spatialSound: true,
-      distanceModel: "exponential",
-      maxDistance: 100
-    });
+      distanceModel: 'exponential' as const,
+      maxDistance: 100,
+    };
+
+    this.footstepSound = new Sound('footstep', BabylonPlaygroundSound.bounce, scene, null, spatialOpts);
     this.footstepSound.attachToMesh(this.mesh);
-    // Lower volume and pitch down to sound more like a thud
-    this.footstepSound.setVolume(0.2);
-    this.footstepSound.setPlaybackRate(0.5);
+
+    this.jumpSound = new Sound('jump', BabylonPlaygroundSound.bounce, scene, null, spatialOpts);
+    this.jumpSound.attachToMesh(this.mesh);
+
+    this.uiBlipSound = new Sound('uiBlip', BabylonPlaygroundSound.bounce, scene, null, {
+      loop: false,
+      autoplay: false,
+      spatialSound: false,
+    });
 
     // We must load loadout first, then initialize weapon
     this.loadLoadout().then(() => {
@@ -111,7 +138,7 @@ export class PlayerController {
         }
         if (item.itemId === 'medkit') {
           this.inventory.push({ itemId: item.itemId, quantity: item.quantity });
-        } else if (item.itemId === 'shotgun_01' || item.itemId === 'pulse_rifle' || item.itemId === 'rifle_01') {
+        } else if (isPrimaryWeaponItemId(item.itemId)) {
           equippedWeapon = item.itemId;
           equippedStats = item.stats || null;
         }
@@ -119,7 +146,7 @@ export class PlayerController {
       this.game.loadoutStagingApplied = true;
     } else {
       for (const item of loadoutItems) {
-        if (item.itemId === 'shotgun_01' || item.itemId === 'pulse_rifle' || item.itemId === 'rifle_01') {
+        if (isPrimaryWeaponItemId(item.itemId)) {
           equippedWeapon = item.itemId;
           equippedStats = item.stats || null;
           break;
@@ -144,8 +171,13 @@ export class PlayerController {
       this.battery = preserved.battery;
       this.maxBattery = preserved.maxBattery;
       this.flashlightOn = preserved.flashlightOn;
-      this.flashlight.intensity =
-        this.flashlightOn && this.battery > 0 ? (this.battery / this.maxBattery) * 2.0 : 0;
+      this.flashlight.range = doom3HandLight.range;
+      this.flashlight.intensity = flashlightOutputIntensity({
+        flashlightOn: this.flashlightOn,
+        battery: this.battery,
+        maxBattery: this.maxBattery,
+        shipHub: this.game.stateMachine.getState() === GameState.SHIP,
+      });
       this.weapon.currentAmmo = Math.max(0, Math.min(preserved.currentAmmo, this.weapon.maxAmmo));
       this.weapon.reserveAmmo = Math.max(0, preserved.reserveAmmo);
       this.game.preservedPlayerState = null;
@@ -154,11 +186,17 @@ export class PlayerController {
 
   private onWindowKeyDown = (e: KeyboardEvent) => {
     this.inputMap[e.code] = true;
-    if (e.code === 'KeyF') {
+    if (e.code === 'KeyF' && !e.repeat) {
       this.flashlightOn = !this.flashlightOn;
+      this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeFlashlight);
+      this.uiBlipSound.setPlaybackRate(AudioMix.uiBlipRateFlashlight);
+      this.uiBlipSound.play();
     }
     if (e.code === 'KeyH') {
       this.tryUseMedkit();
+    }
+    if (e.code === 'KeyG' && !e.repeat) {
+      this.tryDeployRaidGadget();
     }
   };
 
@@ -166,7 +204,13 @@ export class PlayerController {
     this.inputMap[e.code] = false;
   };
 
+  /** Ms remaining before H can heal again (0 = ready). Exposed for HUD. */
+  public get medkitCooldownRemainingMs(): number {
+    return Math.max(0, this.medkitReadyAtMs - Date.now());
+  }
+
   private tryUseMedkit() {
+    if (Date.now() < this.medkitReadyAtMs) return;
     if (this.health >= this.maxHealth) return;
     const inv = this.game.raidInventory;
     const idx = inv.findIndex((i) => i.itemId === 'medkit' && i.quantity > 0);
@@ -177,12 +221,39 @@ export class PlayerController {
       inv.splice(idx, 1);
     }
     this.health = Math.min(this.maxHealth, this.health + 50);
+    this.medkitReadyAtMs = Date.now() + RAID_MEDKIT_COOLDOWN_MS;
+    this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeMedkit);
+    this.uiBlipSound.setPlaybackRate(
+      AudioMix.uiBlipRateMedkitMin + Math.random() * AudioMix.uiBlipRateMedkitSpan
+    );
+    this.uiBlipSound.play();
+  }
+
+  /** Ms until G can fire again — driven by `Game.raidGadgetReadyAtMs`. */
+  public get gadgetCooldownRemainingMs(): number {
+    return Math.max(0, this.game.raidGadgetReadyAtMs - Date.now());
+  }
+
+  private tryDeployRaidGadget() {
+    const st = this.game.stateMachine.getState();
+    if (st !== GameState.STATION && st !== GameState.MOON_BASE) return;
+    if (Date.now() < this.game.raidGadgetReadyAtMs) return;
+    const now = Date.now();
+    this.game.raidGadgetSlowUntil = now + RAID_GADGET_SLOW_DURATION_MS;
+    this.game.raidGadgetReadyAtMs = now + RAID_GADGET_COOLDOWN_MS;
+    this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeGadget);
+    this.uiBlipSound.setPlaybackRate(AudioMix.uiBlipRateGadget);
+    this.uiBlipSound.play();
+    window.dispatchEvent(new CustomEvent('raidGadgetDeployed'));
   }
 
   private setupInput() {
     this.scene.onDisposeObservable.add(() => {
       window.removeEventListener('keydown', this.onWindowKeyDown);
       window.removeEventListener('keyup', this.onWindowKeyUp);
+      this.footstepSound.dispose();
+      this.jumpSound.dispose();
+      this.uiBlipSound.dispose();
     });
     window.addEventListener('keydown', this.onWindowKeyDown);
     window.addEventListener('keyup', this.onWindowKeyUp);
@@ -227,48 +298,91 @@ export class PlayerController {
     const velocity = rotatedDirection.scale(currentSpeed);
     const currentVelocity = this.aggregate.body.getLinearVelocity();
     
-    // Jump
-    if (this.inputMap["Space"] && this.isGrounded) {
-        currentVelocity.y = this.jumpForce;
+    // Jump (debounce jump SFX — grounded can stay true for multiple ticks)
+    if (this.inputMap['Space'] && this.isGrounded) {
+      currentVelocity.y = this.jumpForce;
+      const now = Date.now();
+      if (now - this.lastJumpSoundAt > 320) {
+        this.lastJumpSoundAt = now;
+        this.jumpSound.setVolume(AudioMix.jumpVolume);
+        this.jumpSound.setPlaybackRate(AudioMix.jumpRateMin + Math.random() * AudioMix.jumpRateJitter);
+        this.jumpSound.play();
+      }
     }
 
     // Apply velocity while preserving gravity
     this.aggregate.body.setLinearVelocity(new Vector3(velocity.x, currentVelocity.y, velocity.z));
 
-    // Footstep Audio
-    if (this.isGrounded && velocity.lengthSquared() > 0.1) {
-        const stepInterval = isSprinting ? 300 : 500;
-        const now = Date.now();
-        if (now - this.lastFootstepTime > stepInterval) {
-            this.footstepSound.play();
-            this.lastFootstepTime = now;
-        }
+    const onShipHub = this.game.stateMachine.getState() === GameState.SHIP;
+
+    // Footstep Audio (muted on ship hub — deck ambience handled separately)
+    if (!onShipHub && this.isGrounded && velocity.lengthSquared() > 0.1) {
+      let stepInterval = isSprinting ? 300 : 500;
+      if (this.groundSurfaceSound === 'metal') stepInterval *= 0.88;
+      const now = Date.now();
+      if (now - this.lastFootstepTime > stepInterval) {
+        const metal = this.groundSurfaceSound === 'metal';
+        this.footstepSound.setVolume(metal ? AudioMix.footstepVolumeMetal : AudioMix.footstepVolume);
+        this.footstepSound.setPlaybackRate(
+          (metal
+            ? AudioMix.footstepRateMin + AudioMix.footstepRateMetalBoost
+            : AudioMix.footstepRateMin) + Math.random() * AudioMix.footstepRateJitter
+        );
+        this.footstepSound.play();
+        this.lastFootstepTime = now;
+      }
     }
 
-    // Battery Logic
-    if (this.flashlightOn && this.battery > 0) {
-        this.battery -= 0.5 * dt; // Drain
-        this.flashlight.intensity = (this.battery / this.maxBattery) * 2.0; // Dim as battery dies
+    if (onShipHub) {
+      if (this.battery < this.maxBattery) {
+        this.battery = Math.min(this.maxBattery, this.battery + 2.8 * dt);
+      }
+      this.flashlight.intensity = flashlightOutputIntensity({
+        flashlightOn: this.flashlightOn,
+        battery: this.battery,
+        maxBattery: this.maxBattery,
+        shipHub: true,
+      });
+    } else if (this.flashlightOn && this.battery > 0) {
+      this.battery -= 0.5 * dt;
+      this.flashlight.intensity = flashlightOutputIntensity({
+        flashlightOn: true,
+        battery: this.battery,
+        maxBattery: this.maxBattery,
+        shipHub: false,
+      });
     } else {
-        this.flashlight.intensity = 0;
-        // Slow recharge when off
-        if (this.battery < this.maxBattery) {
-            this.battery += 1.0 * dt;
-        }
+      this.flashlight.intensity = 0;
+      if (this.battery < this.maxBattery) {
+        this.battery += 1.0 * dt;
+      }
     }
 
-    // Interaction Raycast
-    const ray = this.camera.getForwardRay(3);
-    const pick = this.scene.pickWithRay(ray);
-    if (pick?.hit && pick.pickedMesh?.metadata?.onInteract) {
-        this.hoveredInteractable = pick.pickedMesh.name;
-        if (this.inputMap["KeyE"]) {
-            console.log("Interacted with:", pick.pickedMesh.name);
-            pick.pickedMesh.metadata.onInteract();
-            this.inputMap["KeyE"] = false;
-        }
+    let interactionReach = 8;
+    if (onShipHub) {
+      interactionReach = 18;
+    } else if (this.game.stateMachine.getState() === GameState.STATION) {
+      interactionReach = 11;
+    }
+
+    const ray = this.camera.getForwardRay(interactionReach);
+    const pick = this.scene.pickWithRay(ray, (m) => isInteractableTarget(m));
+    const hit = pick?.pickedMesh ?? null;
+
+    if (pick?.hit && isInteractableTarget(hit)) {
+      const hud =
+        typeof hit.metadata?.hudLabel === 'string' ? hit.metadata.hudLabel : hit.name;
+      this.hoveredInteractable = hud;
+      if (this.inputMap['KeyE']) {
+        console.log('Interacted with:', hit.name);
+        this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeInteract);
+        this.uiBlipSound.setPlaybackRate(AudioMix.uiBlipRateInteract + Math.random() * 0.06);
+        this.uiBlipSound.play();
+        (hit.metadata.onInteract as () => void)();
+        this.inputMap['KeyE'] = false;
+      }
     } else {
-        this.hoveredInteractable = null;
+      this.hoveredInteractable = null;
     }
   }
 
@@ -277,10 +391,12 @@ export class PlayerController {
     const ray = new Ray(this.mesh.position, new Vector3(0, -1, 0), 1.1);
     const pick = this.scene.pickWithRay(ray);
     this.isGrounded = pick?.hit || false;
+    const tag = pick?.pickedMesh?.metadata?.surfaceSound;
+    this.groundSurfaceSound = typeof tag === 'string' ? tag : 'generic';
   }
 
   public takeDamage(amount: number) {
-    this.health -= amount;
+    this.health = Math.max(0, this.health - amount);
     console.log(`Player hit! Health: ${this.health}`);
     
     // Camera shake
@@ -291,8 +407,12 @@ export class PlayerController {
     }, 100);
 
     if (this.health <= 0) {
-        console.log("Player Died!");
-        // TODO: Transition to DEATH state
+      console.warn('Raid failed — casualty. Salvaged raid backpack is forfeited.');
+      queueMicrotask(() => {
+        if (this.game.stateMachine.getState() === GameState.SHIP) return;
+        this.game.raidInventory = [];
+        this.game.stateMachine.setState(GameState.SHIP);
+      });
     }
   }
 }

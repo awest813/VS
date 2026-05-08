@@ -1,7 +1,40 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react';
 import { Game } from './game/Game';
+import { RAID_MEDKIT_COOLDOWN_MS } from './game/player/PlayerController';
+import { RAID_GADGET_COOLDOWN_MS } from './game/raid/raidGadget';
+import { RAID_LORE_BY_SEGMENT } from './game/level/raidLoreTerminals';
 import { GameState } from './game/StateMachine';
 import { db, StashItem, Contract } from './game/persistence/SaveDB';
+import {
+  getContractRaidHint,
+  contractProgressSummary,
+} from './game/contracts/contractRules';
+import { ARMORY_PRIMARY_OFFERS, getWeaponRaidHudHint } from './game/weapons/weaponDefinitions';
+import { getLootDefinition, lootTradeInCredits } from './game/loot/lootDatabase';
+import { lootColorForItemId } from './game/loot/lootUi';
+import { hud, humanizeHudTarget } from './ui/uiTokens';
+
+const fontUi = hud.fontUi;
+const fontMono = hud.fontMono;
+const panelBase: CSSProperties = { ...hud.panel() };
+
+const JUNK_ITEM_IDS = new Set(['scrap_metal', 'copper_wire']);
+
+function formatItemId(id: string): string {
+  const fromDb = getLootDefinition(id)?.name;
+  if (fromDb) return fromDb;
+  const map: Record<string, string> = {
+    survey_drive: 'Survey drive',
+    scrap_metal: 'Scrap',
+    copper_wire: 'Copper wire',
+    ammo_9mm: '9×mm rounds',
+    medkit: 'Medkit',
+    rifle_01: 'Assault rifle',
+    shotgun_01: 'Pump shotgun',
+    pulse_rifle: 'Pulse rifle',
+  };
+  return map[id] ?? id.replace(/_/g, ' ');
+}
 
 interface AppProps {
   game: Game;
@@ -9,45 +42,65 @@ interface AppProps {
 
 const App: React.FC<AppProps> = ({ game }) => {
   const [gameState, setGameState] = useState<GameState>(game.stateMachine.getState());
-  const [ammo, setAmmo] = useState({ current: 30, reserve: 90 });
+  const [ammo, setAmmo] = useState({ current: 30, reserve: 90, max: 30 });
+  const [reloading, setReloading] = useState(false);
   const [stash, setStash] = useState<StashItem[]>([]);
   const [loadout, setLoadout] = useState<StashItem[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [activeContractId, setActiveContractId] = useState<number | null>(null);
-  const [inventory, setInventory] = useState<{itemId: string, quantity: number}[]>([]);
+  const [inventory, setInventory] = useState<{ itemId: string; quantity: number }[]>([]);
   const [hoveredTarget, setHoveredTarget] = useState<string | null>(null);
   const [isShipUIOpen, setIsShipUIOpen] = useState<boolean>(false);
   const [money, setMoney] = useState<number>(0);
   const [health, setHealth] = useState({ current: 100, max: 100 });
   const [battery, setBattery] = useState({ current: 100, max: 100 });
+  const [pointerLocked, setPointerLocked] = useState(typeof document !== 'undefined' && !!document.pointerLockElement);
+  const [stationRaidKills, setStationRaidKills] = useState(0);
+  const [equippedWeaponItemId, setEquippedWeaponItemId] = useState<string>('rifle_01');
+  const [toast, setToast] = useState<string | null>(null);
+  const [medkitCooldownMs, setMedkitCooldownMs] = useState(0);
+  const [gadgetCooldownMs, setGadgetCooldownMs] = useState(0);
+  const [environmentalSurge, setEnvironmentalSurge] = useState(false);
+  const [loreTerminalText, setLoreTerminalText] = useState<string | null>(null);
+
+  const shipOpsDialogRef = useRef<HTMLDivElement>(null);
+
+  const refreshDbToState = useCallback(async () => {
+    const items = await db.stashItems.toArray();
+    setStash(items.filter((i) => i.slot === 'stash'));
+    setLoadout(items.filter((i) => i.slot === 'loadout'));
+    const allContracts = await db.contracts.toArray();
+    setContracts(allContracts);
+    const active = allContracts.find((c) => c.isActive);
+    setActiveContractId(active?.id ?? null);
+    const profile = await db.playerProfile.toCollection().first();
+    if (profile) setMoney(profile.money);
+  }, []);
 
   useEffect(() => {
-    const loadStash = async () => {
-      const items = await db.stashItems.toArray();
-      setStash(items.filter(i => i.slot === 'stash'));
-      setLoadout(items.filter(i => i.slot === 'loadout'));
-      const allContracts = await db.contracts.toArray();
-      setContracts(allContracts);
-      const active = allContracts.find(c => c.isActive);
-      if (active && active.id) setActiveContractId(active.id);
-      
-      const profile = await db.playerProfile.toCollection().first();
-      if (profile) setMoney(profile.money);
-    };
-
-    loadStash();
+    void refreshDbToState();
 
     const cleanup = game.stateMachine.onStateChange((newState) => {
       setGameState(newState);
     });
 
     const interval = setInterval(() => {
+      setEnvironmentalSurge(game.raidEnvironmentalSurge);
       if (game.player) {
+        setGadgetCooldownMs(game.player.gadgetCooldownRemainingMs);
         if (game.player.weapon) {
+          const w = game.player.weapon;
           setAmmo({
-            current: game.player.weapon.currentAmmo,
-            reserve: game.player.weapon.reserveAmmo
+            current: w.currentAmmo,
+            reserve: w.reserveAmmo,
+            max: w.maxAmmo,
           });
+          setReloading(!!w.isReloading);
+          setEquippedWeaponItemId(w.weaponItemId);
+        }
+        const st = game.stateMachine.getState();
+        if (st === GameState.STATION || st === GameState.MOON_BASE) {
+          setStationRaidKills(game.enemiesKilledStation);
         }
         if (game.player.inventory) {
           setInventory([...game.player.inventory]);
@@ -55,48 +108,107 @@ const App: React.FC<AppProps> = ({ game }) => {
         setHealth({ current: game.player.health, max: game.player.maxHealth });
         setBattery({ current: Math.round(game.player.battery), max: game.player.maxBattery });
         setHoveredTarget(game.player.hoveredInteractable || null);
+        setMedkitCooldownMs(game.player.medkitCooldownRemainingMs);
+      } else {
+        setGadgetCooldownMs(0);
       }
     }, 100);
 
     const toggleUI = () => {
-      setIsShipUIOpen(prev => !prev);
+      setIsShipUIOpen((prev) => !prev);
     };
     window.addEventListener('toggleShipUI', toggleUI);
+
+    const onLockChange = () => {
+      setPointerLocked(!!document.pointerLockElement);
+    };
+    document.addEventListener('pointerlockchange', onLockChange);
 
     return () => {
       cleanup();
       clearInterval(interval);
       window.removeEventListener('toggleShipUI', toggleUI);
+      document.removeEventListener('pointerlockchange', onLockChange);
     };
-  }, [game]);
+  }, [game, refreshDbToState]);
+
+  useEffect(() => {
+    const onLore = (e: Event) => {
+      const ce = e as CustomEvent<{ segmentId?: string }>;
+      const id = ce.detail?.segmentId;
+      const body = id ? RAID_LORE_BY_SEGMENT[id] : undefined;
+      if (body) setLoreTerminalText(body);
+    };
+    window.addEventListener('raidLorePing', onLore as EventListener);
+    return () => window.removeEventListener('raidLorePing', onLore as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!loreTerminalText) return;
+    const t = window.setTimeout(() => setLoreTerminalText(null), 14000);
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLoreTerminalText(null);
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [loreTerminalText]);
+
+  useEffect(() => {
+    const onGadget = () => setToast('Concussive pulse · hostiles slowed in radius.');
+    window.addEventListener('raidGadgetDeployed', onGadget);
+    return () => window.removeEventListener('raidGadgetDeployed', onGadget);
+  }, []);
 
   useEffect(() => {
     if (gameState !== GameState.SHIP) return;
-    void (async () => {
-      const items = await db.stashItems.toArray();
-      setStash(items.filter((i) => i.slot === 'stash'));
-      setLoadout(items.filter((i) => i.slot === 'loadout'));
-      const allContracts = await db.contracts.toArray();
-      setContracts(allContracts);
-      const active = allContracts.find((c) => c.isActive);
-      setActiveContractId(active?.id ?? null);
-      const profile = await db.playerProfile.toCollection().first();
-      if (profile) setMoney(profile.money);
-    })();
-  }, [gameState]);
+    void refreshDbToState();
+  }, [gameState, refreshDbToState]);
+
+  useEffect(() => {
+    if (!isShipUIOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsShipUIOpen(false);
+        game.canvas?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isShipUIOpen, game]);
+
+  useEffect(() => {
+    if (!isShipUIOpen) return;
+    const id = window.requestAnimationFrame(() => {
+      shipOpsDialogRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [isShipUIOpen]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 2800);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
+  const stashJunkQuantity = stash.reduce((sum, i) => {
+    if (JUNK_ITEM_IDS.has(i.itemId)) return sum + i.quantity;
+    return sum;
+  }, 0);
 
   const sellJunk = async () => {
-    const junkTypes = { 'scrap_metal': 10, 'copper_wire': 25 };
     let totalEarned = 0;
-    
+
     await db.transaction('rw', db.stashItems, db.playerProfile, async () => {
       const items = await db.stashItems.toArray();
       const profile = await db.playerProfile.toCollection().first();
       if (!profile) return;
 
       for (const item of items) {
-        if (item.slot === 'stash' && Object.keys(junkTypes).includes(item.itemId)) {
-          totalEarned += junkTypes[item.itemId as keyof typeof junkTypes] * item.quantity;
+        if (item.slot === 'stash' && JUNK_ITEM_IDS.has(item.itemId)) {
+          totalEarned += lootTradeInCredits(item.itemId) * item.quantity;
           await db.stashItems.delete(item.id!);
         }
       }
@@ -106,12 +218,12 @@ const App: React.FC<AppProps> = ({ game }) => {
       }
     });
 
-    if (totalEarned > 0) {
-      const items = await db.stashItems.toArray();
-      setStash(items.filter(i => i.slot === 'stash'));
-      const newProfile = await db.playerProfile.toCollection().first();
-      if (newProfile) setMoney(newProfile.money);
-    }
+    await refreshDbToState();
+    setToast(
+      totalEarned > 0
+        ? `Sold junk for ¤ ${totalEarned.toLocaleString()}.`
+        : 'No scrap or copper wire in stash to sell.'
+    );
   };
 
   const buyItem = async (itemId: string, cost: number, quantity: number = 1) => {
@@ -120,10 +232,8 @@ const App: React.FC<AppProps> = ({ game }) => {
       const profile = await db.playerProfile.toCollection().first();
       if (!profile || profile.money < cost) return;
 
-      // deduct money
       await db.playerProfile.update(profile.id!, { money: profile.money - cost });
-      
-      // add item
+
       const existing = await db.stashItems
         .where('itemId')
         .equals(itemId)
@@ -138,238 +248,845 @@ const App: React.FC<AppProps> = ({ game }) => {
     });
 
     if (success) {
-        const items = await db.stashItems.toArray();
-        setStash(items.filter(i => i.slot === 'stash'));
-        const newProfile = await db.playerProfile.toCollection().first();
-        if (newProfile) setMoney(newProfile.money);
+      await refreshDbToState();
+      const label = getLootDefinition(itemId)?.name ?? itemId.replace(/_/g, ' ');
+      setToast(`Purchased ${label} (${quantity}×) · check stash.`);
     }
   };
 
+  const inFirstPerson =
+    (gameState === GameState.SHIP || gameState === GameState.STATION || gameState === GameState.MOON_BASE) &&
+    !isShipUIOpen;
+  const showPointerHint = inFirstPerson && !pointerLocked;
+  const healthPct = health.max > 0 ? Math.min(100, (health.current / health.max) * 100) : 0;
+  const batteryPct = battery.max > 0 ? Math.min(100, (battery.current / battery.max) * 100) : 0;
+  const ammoLow = ammo.max > 0 && ammo.current <= Math.max(1, Math.floor(ammo.max * 0.2));
+  const healthLow = healthPct < 28;
+  const batteryLow = battery.max > 0 && batteryPct <= 22;
+  const batteryCritical = battery.max > 0 && batteryPct < 10;
+  const statusPanelOutline =
+    healthLow ? '1px solid rgba(251, 113, 133, 0.38)' : batteryLow ? '1px solid rgba(251, 191, 36, 0.32)' : undefined;
+  const batteryBarColor =
+    batteryLow ?
+      'linear-gradient(90deg, #fcd34d, #d97706)'
+    : 'linear-gradient(90deg, #38bdf8, #0ea5e9)';
+
+  const healthBarColor =
+    healthPct > 55 ? 'linear-gradient(90deg, #34d399, #10b981)' : healthPct > 28 ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #fb7185, #ef4444)';
+
+  const completedContracts = contracts.filter((c) => c.isCompleted);
+  const activeRaidContract = contracts.find((c) => c.isActive && !c.isCompleted);
+  const raidContractZone =
+    gameState === GameState.STATION ? 'station' : gameState === GameState.MOON_BASE ? 'moon' : null;
+  const raidProgressLine = activeRaidContract
+    ? contractProgressSummary(activeRaidContract.title, inventory, stationRaidKills)
+    : null;
+
+  const medkitQty = inventory.reduce((n, i) => n + (i.itemId === 'medkit' ? i.quantity : 0), 0);
+  const medkitReadyFillPct =
+    medkitCooldownMs <= 0
+      ? 100
+      : Math.min(100, ((RAID_MEDKIT_COOLDOWN_MS - medkitCooldownMs) / RAID_MEDKIT_COOLDOWN_MS) * 100);
+
+  const gadgetReadyFillPct =
+    gadgetCooldownMs <= 0
+      ? 100
+      : Math.min(100, ((RAID_GADGET_COOLDOWN_MS - gadgetCooldownMs) / RAID_GADGET_COOLDOWN_MS) * 100);
+
+  const safePad = {
+    paddingLeft: 'max(24px, env(safe-area-inset-left))',
+    paddingRight: 'max(24px, env(safe-area-inset-right))',
+    paddingBottom: 'max(24px, env(safe-area-inset-bottom))',
+    paddingTop: 'max(24px, env(safe-area-inset-top))',
+  };
+
   return (
-    <div className="ui-overlay" style={{
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      width: '100%',
-      height: '100%',
-      pointerEvents: 'none',
-      color: 'white',
-      fontFamily: 'sans-serif'
-    }}>
-      {/* Crosshair */}
-      {(gameState === GameState.SHIP || gameState === GameState.STATION || gameState === GameState.MOON_BASE) && !isShipUIOpen && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '10px'
-        }}>
-          <div style={{
-            width: '4px',
-            height: '4px',
-            background: 'white',
-            borderRadius: '50%',
-            boxShadow: '0 0 5px rgba(0,0,0,0.5)'
-          }} />
+    <div
+      className="ui-overlay"
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        color: '#e8edf5',
+        fontFamily: fontUi,
+        fontSize: 14,
+        lineHeight: 1.45,
+      }}
+    >
+      {toast && (
+        <div className="ui-toast" role="status" aria-live="polite" style={{ zIndex: 24, pointerEvents: 'none' }}>
+          <div style={{ ...panelBase, padding: '12px 22px', color: '#e8eef8', fontSize: 13, textAlign: 'center' }}>{toast}</div>
+        </div>
+      )}
+
+      {(gameState === GameState.STATION || gameState === GameState.MOON_BASE) && environmentalSurge && (
+        // Layering: below toast (24) / lore (26); above contract (7) & pointer hint (20).
+        <div
+          style={{
+            position: 'absolute',
+            top: safePad.paddingTop,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 23,
+            pointerEvents: 'none',
+            ...panelBase,
+            padding: '8px 20px',
+            fontSize: 11,
+            letterSpacing: '0.14em',
+            fontWeight: 650,
+            color: '#fecaca',
+            borderColor: 'rgba(248, 113, 113, 0.35)',
+          }}
+        >
+          GRID SURGE · LIGHTS COMPRESSED · HOSTILES HOT
+        </div>
+      )}
+
+      {loreTerminalText && (
+        <>
+          <div
+            aria-hidden
+            onClick={() => setLoreTerminalText(null)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 25,
+              background: 'rgba(2, 4, 10, 0.62)',
+              pointerEvents: 'auto',
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="raid-lore-heading"
+            aria-live="polite"
+            style={{
+              position: 'absolute',
+              bottom: 'max(120px, calc(env(safe-area-inset-bottom, 0px) + 96px))',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 26,
+              pointerEvents: 'auto',
+              maxWidth: 'min(520px, calc(100vw - 40px))',
+            }}
+          >
+            <div style={{ ...panelBase, padding: '16px 18px' }}>
+              <h2 id="raid-lore-heading" style={{ margin: '0 0 10px 0', ...hud.sectionEyebrow('contract') }}>
+                TERMINAL
+              </h2>
+              <p style={{ margin: '0 0 12px 0', fontSize: 13, lineHeight: 1.55, color: 'rgba(210, 220, 235, 0.94)' }}>
+                {loreTerminalText}
+              </p>
+              <button
+                type="button"
+                onClick={() => setLoreTerminalText(null)}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: 12,
+                  fontFamily: fontUi,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: 'rgba(55, 65, 85, 0.95)',
+                  color: '#e8edf5',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 8,
+                }}
+              >
+                Close <span style={{ fontFamily: fontMono, color: 'rgba(165, 190, 220, 0.85)', fontWeight: 500 }}>Esc</span>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {gameState === GameState.SHIP && !isShipUIOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: safePad.paddingBottom,
+            left: safePad.paddingLeft,
+            maxWidth: 380,
+            pointerEvents: 'none',
+            ...panelBase,
+            padding: '14px 18px',
+            zIndex: 8,
+          }}
+        >
+          <div style={{ marginBottom: 8, ...hud.sectionEyebrow('hub') }}>SHIP HUB</div>
+          <p style={{ margin: '0 0 8px 0', fontSize: 13, lineHeight: 1.55, color: 'rgba(200, 215, 235, 0.92)' }}>
+            Aim at the bridge <strong style={{ fontWeight: 650 }}>operations console</strong> (cyan screen) and press{' '}
+            <span style={{ fontFamily: fontMono, color: '#a5d8ff' }}>E</span> — stash, loadout, contracts, armory, dock.
+          </p>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: 'rgba(155, 175, 205, 0.82)' }}>
+            Flashlight batteries recharge here. Primaries stay holstered until you dock with the station.
+          </p>
+        </div>
+      )}
+
+      {activeRaidContract && raidContractZone && (
+        <div
+          style={{
+            position: 'absolute',
+            top: safePad.paddingTop,
+            right: safePad.paddingRight,
+            maxWidth: 'min(360px, calc(100vw - 48px))',
+            pointerEvents: 'none',
+            zIndex: 7,
+            ...panelBase,
+            padding: '14px 18px',
+          }}
+        >
+          <div style={{ marginBottom: 6, ...hud.sectionEyebrow('contract') }}>ACTIVE CONTRACT</div>
+          <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 6 }}>{activeRaidContract.title}</div>
+          <div style={{ fontSize: 11, fontFamily: fontMono, color: '#fde68a', marginBottom: 10 }}>¤ {activeRaidContract.reward.toLocaleString()}</div>
+          <p style={{ margin: '0 0 10px 0', fontSize: 12, lineHeight: 1.55, color: 'rgba(195, 210, 235, 0.88)' }}>
+            {getContractRaidHint(activeRaidContract.title, raidContractZone)}
+          </p>
+          {raidProgressLine && (
+            <p
+              style={{
+                margin: 0,
+                fontSize: 11,
+                lineHeight: 1.45,
+                color: 'rgba(145, 200, 255, 0.88)',
+                borderTop: '1px solid rgba(255,255,255,0.06)',
+                paddingTop: 10,
+              }}
+            >
+              {raidProgressLine}
+            </p>
+          )}
+        </div>
+      )}
+
+      {showPointerHint && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            zIndex: 20,
+          }}
+        >
+          <div
+            style={{
+              ...panelBase,
+              pointerEvents: 'none',
+              padding: '16px 32px',
+              maxWidth: 360,
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 650, letterSpacing: '0.02em', color: 'rgba(240, 246, 255, 0.97)', marginBottom: 6 }}>
+              Click to play
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 450, color: 'rgba(170, 190, 220, 0.88)', lineHeight: 1.5 }}>
+              {gameState === GameState.SHIP ? (
+                <>
+                  Locks the cursor for look and movement. On the bridge, <span style={{ fontFamily: fontMono }}>Esc</span> closes ship
+                  ops if open.
+                </>
+              ) : (
+                <>
+                  Locks the cursor for look, fire, and reload. <span style={{ fontFamily: fontMono }}>Esc</span> closes ship ops,
+                  lore terminals, and other overlays.
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {inFirstPerson && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              width: 22,
+              height: 22,
+              position: 'relative',
+              opacity: pointerLocked ? 0.85 : 0.35,
+              transition: 'opacity 0.2s ease',
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                left: '50%',
+                top: 0,
+                bottom: 0,
+                width: 2,
+                marginLeft: -1,
+                background: 'rgba(255,255,255,0.9)',
+                boxShadow: '0 0 6px rgba(0,0,0,0.5)',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: 0,
+                right: 0,
+                height: 2,
+                marginTop: -1,
+                background: 'rgba(255,255,255,0.9)',
+                boxShadow: '0 0 6px rgba(0,0,0,0.5)',
+              }}
+            />
+            <div
+              style={{
+                position: 'absolute',
+                left: '50%',
+                top: '50%',
+                width: 4,
+                height: 4,
+                marginLeft: -2,
+                marginTop: -2,
+                borderRadius: '50%',
+                background:
+                  healthLow ? '#fb7185' : batteryCritical && !healthLow ? '#fcd34d' : 'rgba(255,255,255,0.95)',
+                boxShadow: '0 0 4px rgba(0,0,0,0.4)',
+              }}
+            />
+          </div>
           {hoveredTarget && (
-            <div style={{ background: 'rgba(0,0,0,0.7)', padding: '5px 10px', borderRadius: '4px', fontSize: '14px', border: '1px solid #555', whiteSpace: 'nowrap' }}>
-              [E] {hoveredTarget}
+            <div
+              style={{
+                ...panelBase,
+                padding: '8px 14px',
+                fontSize: 13,
+                fontWeight: 500,
+                border: '1px solid rgba(120, 200, 255, 0.25)',
+                whiteSpace: 'nowrap',
+                letterSpacing: '0.03em',
+                textTransform: 'uppercase' as const,
+              }}
+            >
+              <span style={{ color: 'rgba(150, 200, 255, 0.85)', marginRight: 10, fontFamily: fontMono }}>E</span>
+              {humanizeHudTarget(hoveredTarget)}
             </div>
           )}
         </div>
       )}
 
-      {/* HUD Layer */}
       {(gameState === GameState.STATION || gameState === GameState.MOON_BASE) && (
-        <div style={{ position: 'absolute', bottom: '20px', left: '20px', pointerEvents: 'auto' }}>
-          <div style={{ background: 'rgba(0,0,0,0.5)', padding: '10px', border: '1px solid #444', marginBottom: '10px' }}>
-            <h2 style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>BACKPACK</h2>
-            {inventory.length === 0 ? <p style={{ margin: 0, color: '#666' }}>Empty</p> : (
-              <ul style={{ margin: 0, paddingLeft: '20px', color: '#fff' }}>
-                {inventory.map(item => <li key={item.itemId}>{item.itemId} x{item.quantity}</li>)}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: safePad.paddingBottom,
+            left: safePad.paddingLeft,
+            pointerEvents: 'auto',
+            maxWidth: 'min(300px, calc(100vw - 48px))',
+          }}
+        >
+          <div style={{ ...panelBase, padding: '14px 16px', marginBottom: 12 }}>
+            <h2 style={{ margin: '0 0 8px 0', ...hud.label() }}>
+              BACKPACK
+            </h2>
+            {inventory.length === 0 ? (
+              <p style={{ margin: 0, color: 'rgba(140,155,175,0.65)', fontSize: 13 }}>
+                Empty — raid loot is not yours until a successful extract to the ship. Dying forfeits this pack.
+              </p>
+            ) : (
+              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.55 }}>
+                {inventory.map((item, idx) => (
+                  <li key={`${item.itemId}-${idx}`} style={{ fontSize: 13, color: lootColorForItemId(item.itemId) }}>
+                    {formatItemId(item.itemId)}{' '}
+                    <span style={{ fontFamily: fontMono, color: 'rgba(180, 200, 230, 0.9)', fontSize: 12 }}>×{item.quantity}</span>
+                  </li>
+                ))}
               </ul>
             )}
           </div>
-          <div style={{ background: 'rgba(0,0,0,0.5)', padding: '10px', border: '1px solid #444' }}>
-            <h2 style={{ margin: 0, fontSize: '14px', color: '#aaa' }}>HEALTH</h2>
-            <h1 style={{ margin: 0, fontSize: '28px' }}>{health.current} / {health.max}</h1>
-            <h2 style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#888' }}>FLASHLIGHT</h2>
-            <p style={{ margin: 0, fontSize: '16px', color: '#9cf' }}>{battery.current}%</p>
-            <h2 style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#888' }}>AMMO</h2>
-            <h1 style={{ margin: 0, fontSize: '32px' }}>{ammo.current} / {ammo.reserve}</h1>
-            <p style={{ margin: '8px 0 0 0', fontSize: '11px', color: '#666' }}>[H] use medkit</p>
+          <div
+            style={{
+              ...panelBase,
+              padding: '16px 16px',
+              outline: statusPanelOutline,
+            }}
+          >
+            <h2 style={{ margin: '0 0 10px 0', ...hud.label() }}>
+              STATUS
+            </h2>
+            <div
+              style={{
+                marginBottom: 10,
+                paddingBottom: 10,
+                borderBottom: '1px solid rgba(255,255,255,0.06)',
+              }}
+            >
+              <div style={{ marginBottom: 6, ...hud.sectionEyebrow('cool') }}>PRIMARY WEAPON</div>
+              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>{formatItemId(equippedWeaponItemId)}</div>
+              <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: 'rgba(150, 170, 200, 0.88)' }}>{getWeaponRaidHudHint(equippedWeaponItemId)}</p>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Health</span>
+                <span style={{ fontFamily: fontMono, fontSize: 14, fontWeight: 550, color: healthLow ? '#fda4af' : '#e8edf5' }}>
+                  {Math.round(health.current)} / {health.max}
+                </span>
+              </div>
+              <div style={{ height: 6, borderRadius: 4, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+                <div style={{ width: `${healthPct}%`, height: '100%', background: healthBarColor, borderRadius: 4, transition: 'width 0.15s ease' }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Flashlight</span>
+                <span
+                  style={{
+                    fontFamily: fontMono,
+                    fontSize: 13,
+                    color: batteryLow ? '#fcd34d' : 'rgba(150, 210, 255, 0.95)',
+                    fontWeight: batteryLow ? 600 : 400,
+                  }}
+                >
+                  {battery.current}%
+                </span>
+              </div>
+              <div style={{ height: 4, borderRadius: 3, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${batteryPct}%`,
+                    height: '100%',
+                    background: batteryBarColor,
+                    borderRadius: 3,
+                    transition: 'width 0.15s ease, background 0.2s ease',
+                  }}
+                />
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+              <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Ammo</span>
+              <span
+                style={{
+                  fontFamily: fontMono,
+                  fontSize: 26,
+                  fontWeight: 550,
+                  color: reloading ? '#fbbf24' : ammoLow ? '#fda4af' : '#f1f5f9',
+                  letterSpacing: '-0.02em',
+                }}
+              >
+                {reloading ? '…' : ammo.current}
+                <span style={{ fontSize: 15, color: 'rgba(160, 175, 195, 0.85)', fontWeight: 450 }}> / {ammo.reserve}</span>
+              </span>
+            </div>
+            {reloading && (
+              <p style={{ margin: '8px 0 0 0', fontSize: 12, fontWeight: 600, color: '#fcd34d', letterSpacing: '0.06em' }}>RELOADING</p>
+            )}
+            <div style={{ marginTop: 12, marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Medkit</span>
+                <span style={{ fontFamily: fontMono, fontSize: 13, color: 'rgba(190, 230, 200, 0.92)' }}>
+                  ×{medkitQty}
+                  {medkitCooldownMs > 0 ? (
+                    <span style={{ color: '#fcd34d', marginLeft: 8 }}>{(medkitCooldownMs / 1000).toFixed(1)}s</span>
+                  ) : (
+                    <span style={{ color: 'rgba(130, 175, 145, 0.75)', marginLeft: 8, fontSize: 11 }}>ready</span>
+                  )}
+                </span>
+              </div>
+              <div style={{ height: 3, borderRadius: 2, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${medkitReadyFillPct}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #34d399, #059669)',
+                    borderRadius: 2,
+                    transition: 'width 0.12s linear',
+                  }}
+                />
+              </div>
+            </div>
+            <div style={{ marginTop: 12, marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Pulse (gadget)</span>
+                <span style={{ fontFamily: fontMono, fontSize: 13, color: 'rgba(180, 210, 255, 0.95)' }}>
+                  {gadgetCooldownMs > 0 ? (
+                    <span style={{ color: '#93c5fd' }}>{(gadgetCooldownMs / 1000).toFixed(1)}s</span>
+                  ) : (
+                    <span style={{ color: 'rgba(130, 165, 210, 0.75)', fontSize: 11 }}>ready</span>
+                  )}
+                </span>
+              </div>
+              <div style={{ height: 3, borderRadius: 2, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${gadgetReadyFillPct}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #60a5fa, #2563eb)',
+                    borderRadius: 2,
+                    transition: 'width 0.12s linear',
+                  }}
+                />
+              </div>
+            </div>
+            <p style={{ margin: '12px 0 0 0', fontSize: 11, lineHeight: 1.6, color: 'rgba(130, 145, 165, 0.88)', wordSpacing: '-0.02em' }}>
+              Move <span style={{ fontFamily: fontMono, color: 'rgba(155,175,205,0.95)' }}>WASD</span> · Sprint{' '}
+              <span style={{ fontFamily: fontMono }}>Shift</span> · Jump <span style={{ fontFamily: fontMono }}>Space</span> · Fire mouse ·{' '}
+              <span style={{ fontFamily: fontMono }}>E</span> interact · <span style={{ fontFamily: fontMono }}>R</span> reload ·{' '}
+              <span style={{ fontFamily: fontMono }}>F</span> flashlight · <span style={{ fontFamily: fontMono }}>H</span> medkit (
+              {RAID_MEDKIT_COOLDOWN_MS / 1000}s) · <span style={{ fontFamily: fontMono }}>G</span> pulse ({RAID_GADGET_COOLDOWN_MS / 1000}s)
+            </p>
           </div>
         </div>
       )}
 
-      {/* Ship UI Layer */}
       {gameState === GameState.SHIP && isShipUIOpen && (
-        <div style={{ 
-          position: 'absolute', 
-          top: '50%', 
-          left: '50%', 
-          transform: 'translate(-50%, -50%)',
-          pointerEvents: 'auto',
-          background: 'rgba(0,0,0,0.8)',
-          padding: '40px',
-          border: '1px solid #444',
-          textAlign: 'center'
-        }}>
-          <h1>SHIP OPERATIONS CENTER</h1>
-          <h2 style={{ color: 'gold', margin: '0 0 20px 0', fontSize: '24px' }}>FUNDS: ¤{money}</h2>
-          <div style={{ display: 'flex', gap: '20px', justifyContent: 'center' }}>
-            <button 
+        <>
+          <div
+            aria-hidden
+            onClick={() => setIsShipUIOpen(false)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 30,
+              background: 'rgba(2, 6, 14, 0.78)',
+              backdropFilter: 'blur(6px)',
+              pointerEvents: 'auto',
+            }}
+          />
+          <div
+            ref={shipOpsDialogRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ship-ops-heading"
+            style={{
+              position: 'absolute',
+              top: 'max(24px, env(safe-area-inset-top))',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              pointerEvents: 'auto',
+              zIndex: 31,
+              ...panelBase,
+              padding: 'clamp(28px, 4vw, 40px)',
+              width: 'min(1120px, calc(100vw - max(48px, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))))',
+              maxHeight: 'min(580px, calc(100vh - max(48px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))))',
+              overflowY: 'auto',
+              textAlign: 'center',
+            }}
+          >
+          <p style={{ margin: '0 0 4px 0', ...hud.sectionEyebrow('ops') }}>OPS / CONTRACT</p>
+          <h1 id="ship-ops-heading" style={{ margin: '0 0 12px 0', fontSize: 'clamp(1.35rem, 2.4vw, 1.85rem)', fontWeight: 700, letterSpacing: '-0.02em' }}>
+            Void Sovereigns — ship ops
+          </h1>
+          <p style={{ margin: '0 0 20px 0', fontSize: 12, color: 'rgba(160, 175, 200, 0.82)' }}>
+            <span style={{ fontFamily: fontMono, color: 'rgba(180, 215, 255, 0.9)' }}>Esc</span> or backdrop click to close · Same data as the cyan bridge screen · Select one contract before docking
+          </p>
+          <h2 style={{ color: '#fde68a', margin: '0 0 22px 0', fontSize: 'clamp(1.05rem, 2vw, 1.35rem)', fontFamily: fontMono, fontWeight: 550 }}>¤ {money.toLocaleString()}</h2>
+          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              aria-label={activeContractId ? 'Dock with station and begin raid' : 'Select a contract below before docking'}
+              title={!activeContractId ? 'Activate a contract on the right to unlock docking' : undefined}
               onClick={() => {
                 setIsShipUIOpen(false);
                 game.stateMachine.setState(GameState.STATION);
               }}
               disabled={!activeContractId}
               style={{
-                padding: '15px 30px',
-                fontSize: '20px',
+                padding: '14px 28px',
+                fontSize: 15,
+                fontFamily: fontUi,
+                fontWeight: 600,
                 cursor: activeContractId ? 'pointer' : 'not-allowed',
-                background: activeContractId ? '#800' : '#444',
-                color: activeContractId ? 'white' : '#888',
-                border: 'none',
-                marginTop: '20px',
-                fontWeight: 'bold',
-                letterSpacing: '2px'
+                background: activeContractId ? 'linear-gradient(180deg, #b91c1c, #7f1d1d)' : 'rgba(60, 65, 75, 0.8)',
+                color: activeContractId ? '#fff' : 'rgba(180, 185, 195, 0.6)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                letterSpacing: '0.06em',
               }}
             >
               {activeContractId ? 'DOCK WITH STATION' : 'SELECT A CONTRACT'}
             </button>
             <button
+              type="button"
+              aria-label="Close ship operations"
               onClick={() => setIsShipUIOpen(false)}
               style={{
-                padding: '15px 30px',
-                fontSize: '20px',
+                padding: '14px 28px',
+                fontSize: 15,
+                fontFamily: fontUi,
+                fontWeight: 600,
                 cursor: 'pointer',
-                background: '#444',
-                color: 'white',
-                border: 'none',
-                marginTop: '20px',
-                fontWeight: 'bold',
-                letterSpacing: '2px'
+                background: 'rgba(55, 60, 72, 0.95)',
+                color: '#e8edf5',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                letterSpacing: '0.05em',
               }}
             >
-              CLOSE TERMINAL
+              Close
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: '20px', marginTop: '40px', textAlign: 'left' }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #444', paddingBottom: '10px', marginBottom: '10px' }}>
-                <h3 style={{ margin: 0 }}>STASH</h3>
-                <button 
-                  onClick={sellJunk}
-                  style={{ background: 'gold', color: 'black', border: 'none', padding: '5px 10px', cursor: 'pointer', fontWeight: 'bold' }}
+          <div className="ops-grid">
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 10, marginBottom: 10 }}>
+                <h3 style={{ margin: 0, fontSize: 13, letterSpacing: '0.1em', fontWeight: 600 }}>STASH</h3>
+                <button
+                  type="button"
+                  aria-label={stashJunkQuantity > 0 ? 'Sell scrap and copper wire from stash for credits' : 'No junk items in stash'}
+                  onClick={() => void sellJunk()}
+                  disabled={stashJunkQuantity === 0}
+                  style={{
+                    background: stashJunkQuantity > 0 ? 'linear-gradient(180deg, #fbbf24, #d97706)' : 'rgba(70, 60, 40, 0.5)',
+                    color: stashJunkQuantity > 0 ? '#1a1510' : 'rgba(170,165,155,0.5)',
+                    border: 'none',
+                    padding: '7px 14px',
+                    cursor: stashJunkQuantity > 0 ? 'pointer' : 'not-allowed',
+                    fontWeight: 700,
+                    fontFamily: fontUi,
+                    borderRadius: 8,
+                    fontSize: 11,
+                    letterSpacing: '0.06em',
+                  }}
                 >
                   SELL JUNK
                 </button>
               </div>
-              <p style={{ fontSize: '12px', color: '#888', marginTop: '-5px' }}>(Click to Equip)</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', maxHeight: '200px', overflowY: 'auto' }}>
-                {stash.map(item => (
-                  <div 
-                    key={item.id} 
-                    onClick={async () => {
-                      await db.stashItems.update(item.id!, { slot: 'loadout' });
-                      const items = await db.stashItems.toArray();
-                      setStash(items.filter(i => i.slot === 'stash'));
-                      setLoadout(items.filter(i => i.slot === 'loadout'));
-                    }}
-                    style={{ background: '#222', padding: '10px', border: '1px solid #333', cursor: 'pointer' }}
-                  >
-                    <div style={{ fontSize: '12px', color: '#888' }}>{item.itemId}</div>
-                    <div style={{ fontSize: '18px' }}>x{item.quantity}</div>
+              <p style={{ fontSize: 11, color: 'rgba(150,165,185,0.85)', margin: '0 0 12px 0', lineHeight: 1.45 }}>
+                Click an item card to stage it into loadout. Junk = scrap metal &amp; copper wire only.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, maxHeight: 212, overflowY: 'auto', paddingBottom: 2 }}>
+                {stash.length === 0 ? (
+                  <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'rgba(140,155,175,0.75)', padding: '12px 8px', textAlign: 'center', borderRadius: 8 }}>
+                    Stash is empty — extracted raid loot appears here.
                   </div>
-                ))}
+                ) : (
+                  stash.map((item) => (
+                    <div
+                      key={item.id}
+                      tabIndex={0}
+                      role="button"
+                      className="ui-card-interactive"
+                      onKeyDown={async (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          await db.stashItems.update(item.id!, { slot: 'loadout' });
+                          await refreshDbToState();
+                        }
+                      }}
+                      onClick={async () => {
+                        await db.stashItems.update(item.id!, { slot: 'loadout' });
+                        await refreshDbToState();
+                      }}
+                      style={{
+                        background: 'rgba(30, 36, 48, 0.92)',
+                        padding: '10px 12px',
+                        border: '1px solid rgba(255,255,255,0.06)',
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ fontSize: 11, color: lootColorForItemId(item.itemId), fontWeight: 600 }}>{formatItemId(item.itemId)}</div>
+                      <div style={{ fontSize: 16, fontFamily: fontMono, fontWeight: 550, marginTop: 4 }}>×{item.quantity}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
-            <div style={{ flex: 1 }}>
-              <h3 style={{ borderBottom: '1px solid #444', paddingBottom: '10px', color: '#4a9eff' }}>LOADOUT (Click to Unequip)</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', maxHeight: '200px', overflowY: 'auto' }}>
-                {loadout.map(item => (
-                  <div 
-                    key={item.id} 
-                    onClick={async () => {
-                      await db.stashItems.update(item.id!, { slot: 'stash' });
-                      const items = await db.stashItems.toArray();
-                      setStash(items.filter(i => i.slot === 'stash'));
-                      setLoadout(items.filter(i => i.slot === 'loadout'));
-                    }}
-                    style={{ background: '#1a2a3a', padding: '10px', border: '1px solid #4a9eff', cursor: 'pointer' }}
-                  >
-                    <div style={{ fontSize: '12px', color: '#88aadd' }}>{item.itemId}</div>
-                    <div style={{ fontSize: '18px' }}>x{item.quantity}</div>
+            <div>
+              <h3 style={{ margin: '0 0 10px 0', fontSize: 13, letterSpacing: '0.1em', fontWeight: 600, color: '#7dd3fc', borderBottom: '1px solid rgba(125, 211, 252, 0.2)', paddingBottom: 10 }}>
+                LOADOUT
+              </h3>
+              <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
+                Click items from stash to stage one primary (rifle, shotgun, or pulse) plus 9×mm for reserves. Staged gear comes with you from the shuttle; ammunition you find mid-raid stays on you until green extract saves it.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, maxHeight: 212, overflowY: 'auto', paddingBottom: 2 }}>
+                {loadout.length === 0 ? (
+                  <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'rgba(140,155,175,0.75)', padding: '12px 8px', textAlign: 'center', borderRadius: 8 }}>
+                    No items staged · click stash cards to equip before docking.
                   </div>
-                ))}
+                ) : (
+                  loadout.map((item) => (
+                    <div
+                      key={item.id}
+                      tabIndex={0}
+                      role="button"
+                      className="ui-card-interactive"
+                      onKeyDown={async (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          await db.stashItems.update(item.id!, { slot: 'stash' });
+                          await refreshDbToState();
+                        }
+                      }}
+                      onClick={async () => {
+                        await db.stashItems.update(item.id!, { slot: 'stash' });
+                        await refreshDbToState();
+                      }}
+                      style={{
+                        background: 'rgba(20, 40, 58, 0.6)',
+                        padding: '10px 12px',
+                        border: '1px solid rgba(125, 211, 252, 0.28)',
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ fontSize: 11, color: lootColorForItemId(item.itemId), fontWeight: 600 }}>{formatItemId(item.itemId)}</div>
+                      <div style={{ fontSize: 16, fontFamily: fontMono, fontWeight: 550, marginTop: 4 }}>×{item.quantity}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
-            <div style={{ flex: 1.5 }}>
-              <h3 style={{ borderBottom: '1px solid #444', paddingBottom: '10px' }}>AVAILABLE CONTRACTS</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto' }}>
-                {contracts.filter(c => !c.isCompleted).map(contract => (
-                  <div 
-                    key={contract.id} 
-                    onClick={async () => {
-                        // Deselect all
+            <div style={{ flex: '1.35 1 260px', minWidth: 0 }}>
+              <h3 style={{ margin: '0 0 10px 0', fontSize: 13, letterSpacing: '0.1em', fontWeight: 600, borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: 10 }}>
+                CONTRACTS
+              </h3>
+              <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
+                One mission at a time. Meet the objective on the station or moonbase, ride green extracts to stash loot; the final jump from the station to your ship settles payment.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 212, overflowY: 'auto' }}>
+                {contracts.filter((c) => !c.isCompleted).length === 0 && (
+                  <p style={{ margin: 0, fontSize: 12, color: 'rgba(140,155,175,0.75)' }}>No open contracts.</p>
+                )}
+                {contracts
+                  .filter((c) => !c.isCompleted)
+                  .map((contract) => (
+                    <div
+                      key={contract.id}
+                      tabIndex={0}
+                      role="button"
+                      aria-pressed={activeContractId === contract.id}
+                      className="ui-card-interactive"
+                      onKeyDown={async (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          await db.contracts.toCollection().modify({ isActive: false });
+                          await db.contracts.update(contract.id!, { isActive: true });
+                          await refreshDbToState();
+                        }
+                      }}
+                      onClick={async () => {
                         await db.contracts.toCollection().modify({ isActive: false });
-                        // Select this one
                         await db.contracts.update(contract.id!, { isActive: true });
-                        const updated = await db.contracts.toArray();
-                        setContracts(updated);
-                        setActiveContractId(contract.id!);
-                    }}
-                    style={{ 
-                        background: activeContractId === contract.id ? '#422' : '#222', 
-                        padding: '10px', 
-                        border: `1px solid ${activeContractId === contract.id ? '#f00' : '#333'}`,
-                        cursor: 'pointer'
-                    }}
-                  >
-                    <div style={{ fontWeight: 'bold', fontSize: '16px' }}>{contract.title}</div>
-                    <div style={{ fontSize: '12px', color: '#aaa', margin: '5px 0' }}>{contract.description}</div>
-                    <div style={{ fontSize: '14px', color: 'gold' }}>Reward: ¤{contract.reward}</div>
-                  </div>
-                ))}
+                        await refreshDbToState();
+                      }}
+                      style={{
+                        background: activeContractId === contract.id ? 'rgba(80, 30, 35, 0.78)' : 'rgba(30, 36, 48, 0.92)',
+                        padding: '12px 14px',
+                        border: `1px solid ${activeContractId === contract.id ? 'rgba(248, 113, 113, 0.5)' : 'rgba(255,255,255,0.07)'}`,
+                        borderRadius: 8,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{contract.title}</div>
+                        {activeContractId === contract.id && (
+                          <span
+                            style={{
+                              flexShrink: 0,
+                              fontSize: 9,
+                              fontWeight: 700,
+                              letterSpacing: '0.12em',
+                              color: '#fecaca',
+                              border: '1px solid rgba(248, 113, 113, 0.4)',
+                              borderRadius: 4,
+                              padding: '2px 6px',
+                            }}
+                          >
+                            ACTIVE
+                          </span>
+                        )}
+                      </div>
+                      <div className="contract-desc" style={{ fontSize: 11, color: 'rgba(175, 190, 210, 0.88)', margin: '6px 0', lineHeight: 1.45 }}>
+                        {contract.description}
+                      </div>
+                      <div style={{ fontSize: 13, color: '#fde68a', fontFamily: fontMono }}>¤ {contract.reward.toLocaleString()}</div>
+                    </div>
+                  ))}
               </div>
+              {completedContracts.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <p style={{ margin: '0 0 6px 0', fontSize: 10, letterSpacing: '0.12em', color: 'rgba(130,155,145,0.75)', fontWeight: 600 }}>
+                    COMPLETED
+                  </p>
+                  {completedContracts.map((c) => (
+                    <div
+                      key={c.id}
+                      style={{
+                        fontSize: 12,
+                        color: 'rgba(120, 180, 150, 0.75)',
+                        padding: '4px 0',
+                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                      }}
+                    >
+                      {c.title}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div style={{ flex: 1 }}>
-              <h3 style={{ borderBottom: '1px solid #444', paddingBottom: '10px', color: '#ffb347' }}>ARMORY (BUY)</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '200px', overflowY: 'auto', paddingRight: '5px' }}>
+            <div>
+              <h3 style={{ margin: '0 0 10px 0', fontSize: 13, letterSpacing: '0.1em', fontWeight: 600, color: '#fdba74', borderBottom: '1px solid rgba(253, 186, 116, 0.2)', paddingBottom: 10 }}>
+                ARMORY
+              </h3>
+              <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
+                Keep one primary weapon in loadout. Purchased 9×mm goes to stash — move it into loadout before undocking. Mid-raid, R moves reserve rounds into the magazine; rare moon drops can tweak damage and fire rate on that gun.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 212, overflowY: 'auto', paddingRight: 4 }}>
                 {[
-                    { id: 'shotgun_01', name: 'Shotgun', cost: 100 },
-                    { id: 'pulse_rifle', name: 'Pulse Rifle', cost: 200 },
-                    { id: 'ammo_9mm', name: 'Ammo (x30)', cost: 20, qty: 30 },
-                    { id: 'medkit', name: 'Medkit', cost: 50 }
-                ].map(item => (
-                  <div 
-                    key={item.id} 
-                    onClick={() => buyItem(item.id, item.cost, item.qty || 1)}
-                    style={{ 
-                        background: '#322', 
-                        padding: '10px', 
-                        border: '1px solid #ffb347', 
-                        cursor: money >= item.cost ? 'pointer' : 'not-allowed', 
-                        opacity: money >= item.cost ? 1 : 0.5 
+                  ...ARMORY_PRIMARY_OFFERS.map((o) => ({
+                    id: o.itemId,
+                    name: getLootDefinition(o.itemId)?.name ?? o.itemId,
+                    cost: o.credits,
+                  })),
+                  { id: 'ammo_9mm', name: 'Ammo ×30', cost: 20, qty: 30 },
+                  { id: 'medkit', name: 'Medkit', cost: 50 },
+                ].map((item) => (
+                  <div
+                    key={item.id}
+                    tabIndex={money >= item.cost ? 0 : -1}
+                    role="button"
+                    className={money >= item.cost ? 'ui-card-interactive' : undefined}
+                    onKeyDown={(e) => {
+                      if (money < item.cost) return;
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        void buyItem(item.id, item.cost, item.qty || 1);
+                      }
+                    }}
+                    onClick={() => void buyItem(item.id, item.cost, item.qty || 1)}
+                    style={{
+                      background: 'rgba(50, 32, 28, 0.68)',
+                      padding: '10px 12px',
+                      border: `1px solid ${money >= item.cost ? 'rgba(253, 186, 116, 0.3)' : 'rgba(253, 186, 116, 0.12)'}`,
+                      borderRadius: 8,
+                      cursor: money >= item.cost ? 'pointer' : 'not-allowed',
+                      opacity: money >= item.cost ? 1 : 0.48,
                     }}
                   >
-                    <div style={{ fontSize: '14px', fontWeight: 'bold' }}>{item.name}</div>
-                    <div style={{ fontSize: '12px', color: 'gold' }}>¤{item.cost}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+                    <div style={{ fontSize: 12, color: '#fde68a', fontFamily: fontMono }}>¤ {item.cost}</div>
                   </div>
                 ))}
               </div>
             </div>
           </div>
         </div>
+        </>
       )}
     </div>
   );

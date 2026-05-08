@@ -1,8 +1,17 @@
-import { Scene, Vector3, PointLight, MeshBuilder, Color4, HemisphericLight, PhysicsAggregate, PhysicsShapeType, StandardMaterial, Color3, PBRMaterial, NoiseProceduralTexture } from '@babylonjs/core';
+import { Scene, Vector3, PointLight, MeshBuilder, Color4, HemisphericLight, PhysicsAggregate, PhysicsShapeType, Color3, PBRMaterial, NoiseProceduralTexture } from '@babylonjs/core';
 import { Game } from '../Game';
 import { PlayerController } from '../player/PlayerController';
 import { EnemyAI } from '../ai/EnemyAI';
 import { GameState } from '../StateMachine';
+import { placeBabylonModel } from '../loaders/BabylonHostedDecor';
+import { BABYLON_ENV_STUDIO } from '../loaders/BabylonAssetUrls';
+import { applyBabylonIBL } from '../loaders/applyBabylonIBL';
+import { LootContainer } from '../loot/LootContainer';
+import { MOON_STANDARD_CRATE } from '../loot/lootTables';
+import { mergeRaidLootGrant } from '../loot/raidInventoryMerge';
+import { doom3RaidMoonIBL } from '../level/idTech4Inspired';
+import { MOONBASE_CRATE_SPAWNS, MOONBASE_ENEMY_SPAWNS } from '../level/moonBaseDefs';
+import { environmentalSurgeActiveAt } from '../raid/raidEnvironment';
 
 export class MoonBaseScene {
   private game: Game;
@@ -15,21 +24,25 @@ export class MoonBaseScene {
   public async create(): Promise<Scene> {
     const scene = new Scene(this.game.engine);
     scene.clearColor = new Color4(0.02, 0.02, 0.02, 1);
-    
+
+    applyBabylonIBL(scene, BABYLON_ENV_STUDIO, {
+      intensity: doom3RaidMoonIBL.intensity,
+      exposure: doom3RaidMoonIBL.exposure,
+      contrast: doom3RaidMoonIBL.contrast,
+    });
+
     scene.fogMode = Scene.FOGMODE_EXP;
-    scene.fogDensity = 0.03;
+    scene.fogDensity = doom3RaidMoonIBL.fogDensity;
     scene.fogColor = new Color3(0.02, 0.02, 0.02);
 
     if (this.game.havokPlugin) {
       scene.enablePhysics(new Vector3(0, -9.81, 0), this.game.havokPlugin);
     }
 
-    const player = new PlayerController(this.game, scene, new Vector3(0, 3, -15));
-    this.game.player = player;
-
-    // Ambient light (very dim)
+    /** Low fill light — see `idTech4Inspired.doom3RaidMoonIBL`; point lights + flashlight read. */
     const ambient = new HemisphericLight("ambient", new Vector3(0, 1, 0), scene);
-    ambient.intensity = 0.15;
+    const moonAmbientBase = doom3RaidMoonIBL.hemisphereIntensity;
+    ambient.intensity = moonAmbientBase;
 
     const staticMeshes: import("@babylonjs/core").Mesh[] = [];
 
@@ -120,16 +133,28 @@ export class MoonBaseScene {
 
     // --- Lights ---
     const hubLight = new PointLight("hubLight", new Vector3(0, 4, 20), scene);
-    hubLight.intensity = 0.8;
+    const hubLightBase = 0.8;
+    hubLight.intensity = hubLightBase;
     hubLight.diffuse = new Color3(0.5, 0.8, 1);
 
     const westLight = new PointLight("westLight", new Vector3(-20, 4, 20), scene);
-    westLight.intensity = 0.6;
+    const westLightBase = 0.6;
+    westLight.intensity = westLightBase;
     westLight.diffuse = new Color3(1, 0.5, 0.2); // Warm loot room
 
     const northLight = new PointLight("northLight", new Vector3(0, 4, 50), scene);
-    northLight.intensity = 0.4;
+    const northLightBase = 0.4;
+    northLight.intensity = northLightBase;
     northLight.diffuse = new Color3(1, 0, 0); // Danger/Red
+
+    scene.onBeforeRenderObservable.add(() => {
+      const surge = environmentalSurgeActiveAt(Date.now());
+      this.game.raidEnvironmentalSurge = surge;
+      ambient.intensity = moonAmbientBase * (surge ? 0.4 : 1);
+      hubLight.intensity = hubLightBase * (surge ? 0.38 : 1);
+      westLight.intensity = westLightBase * (surge ? 0.42 : 1);
+      northLight.intensity = northLightBase * (surge ? 0.45 : 1);
+    });
 
     // --- Loot Spawns ---
     const spawnCrate = (id: string, x: number, z: number, isObjective = false) => {
@@ -139,45 +164,85 @@ export class MoonBaseScene {
         mat.albedoColor = isObjective ? new Color3(1, 0.8, 0) : new Color3(0.4, 0.5, 0.4);
         mat.metallic = 0.5;
         mat.roughness = 0.5;
+        mat.bumpTexture = grimeNoise;
         crate.material = mat;
         new PhysicsAggregate(crate, PhysicsShapeType.BOX, { mass: 2 }, scene);
         
-        crate.metadata = {
-            onInteract: () => {
-                if (!this.game.player) return;
+        const lootContainer = isObjective
+          ? LootContainer.fromGrants([{ itemId: 'survey_drive', quantity: 1 }])
+          : LootContainer.fromTable(MOON_STANDARD_CRATE);
 
-                if (isObjective) {
-                    this.game.player.inventory.push({ itemId: 'survey_drive', quantity: 1 });
-                    console.log(`Looted: survey_drive`);
-                } else {
-                    // 20% chance for a weapon, else junk
-                    if (Math.random() < 0.2) {
-                        const weaponTypes = ['rifle_01', 'shotgun_01', 'pulse_rifle'];
-                        const wType = weaponTypes[Math.floor(Math.random() * weaponTypes.length)];
-                        // Generate randomized stats
-                        const stats = {
-                            damageMod: 0.8 + Math.random() * 0.4, // 0.8 to 1.2
-                            fireRateMod: 0.8 + Math.random() * 0.4
-                        };
-                        this.game.player.inventory.push({ itemId: wType, quantity: 1, stats });
-                        console.log(`Looted Rare Weapon: ${wType}`, stats);
-                    } else {
-                        const item = ['scrap_metal', 'copper_wire', 'medkit', 'ammo_9mm'][Math.floor(Math.random() * 4)];
-                        const existing = this.game.player.inventory.find((i: any) => i.itemId === item);
-                        if (existing) existing.quantity++;
-                        else this.game.player.inventory.push({ itemId: item, quantity: 1 });
-                        console.log(`Looted: ${item}`);
-                    }
-                }
-                crate.dispose();
+        crate.metadata = {
+          type: 'loot_container',
+          lootContainer,
+          onInteract: () => {
+            if (!this.game.player) return;
+
+            const grant = lootContainer.takeNext();
+            if (!grant) {
+              crate.dispose();
+              return;
             }
+            mergeRaidLootGrant(this.game.raidInventory, grant);
+            console.log('Looted from container:', grant, lootContainer.lootTableId ?? 'fixed');
+            if (lootContainer.isEmpty) {
+              crate.dispose();
+            }
+          },
         };
     };
 
-    spawnCrate("crate_1", -18, 22);
-    spawnCrate("crate_2", -22, 18);
-    spawnCrate("crate_3", -25, 22);
-    spawnCrate("crate_4", 0, 58, true); // Survey Drive in Deep Storage
+    for (const cdef of MOONBASE_CRATE_SPAWNS) {
+      spawnCrate(cdef.meshId, cdef.x, cdef.z, !!cdef.objective);
+    }
+
+    const netTerminal = MeshBuilder.CreateBox('MoonNetTerminal', { width: 1.4, height: 1.5, depth: 0.4 }, scene);
+    netTerminal.position.set(2.1, 1.2, -14);
+    netTerminal.material = wallMat;
+    netTerminal.metadata = {
+      hudLabel: 'Locker net terminal',
+      onInteract: () => {
+        window.dispatchEvent(
+          new CustomEvent('raidLorePing', { detail: { segmentId: 'moon_deep_storage' } })
+        );
+      },
+    };
+
+    await Promise.all([
+      placeBabylonModel(scene, 'ExplodingBarrel.glb', {
+        position: new Vector3(-20.5, 0.38, 19.25),
+        scale: 0.42,
+        rotationY: 0.6,
+      }),
+      placeBabylonModel(scene, 'ExplodingBarrel.glb', {
+        position: new Vector3(23.75, 0.38, 18.85),
+        scale: 0.4,
+      }),
+      placeBabylonModel(scene, 'marble.gltf', {
+        position: new Vector3(3.2, 1.85, -14.75),
+        scale: 0.55,
+      }),
+      placeBabylonModel(scene, 'emoji_heart.glb', {
+        position: new Vector3(26.85, 1.35, 20.95),
+        scale: 0.35,
+      }),
+      placeBabylonModel(scene, 'BabylonShaderBall_Simple.gltf', {
+        position: new Vector3(-24.85, 0.85, 20.95),
+        scale: 0.06,
+      }),
+      placeBabylonModel(scene, 'ExplodingBarrel.glb', {
+        position: new Vector3(-0.95, 0.38, 22),
+        scale: 0.38,
+        rotationY: -1.15,
+      }),
+      placeBabylonModel(scene, 'pinkEnergyBall.glb', {
+        position: new Vector3(0, 4.15, 20),
+        scale: 0.035,
+      }, 'TrailMeshSpell'),
+    ]);
+
+    const player = new PlayerController(this.game, scene, new Vector3(0, 3, -15));
+    this.game.player = player;
 
     // --- Enemies ---
     if (this.game.navigationPlugin) {
@@ -198,20 +263,24 @@ export class MoonBaseScene {
         });
     }
 
-    new EnemyAI(this.game, scene, new Vector3(0, 1, 5), false); // Melee in corridor
-    new EnemyAI(this.game, scene, new Vector3(-5, 1, 20), true); // Ranged in hub
-    new EnemyAI(this.game, scene, new Vector3(5, 1, 20), false); // Melee in hub
-    new EnemyAI(this.game, scene, new Vector3(-20, 1, 20), true); // Ranged guarding west loot
-    new EnemyAI(this.game, scene, new Vector3(0, 1, 40), true); // Ranged guarding deep storage
-    new EnemyAI(this.game, scene, new Vector3(0, 1, 50), false); // Melee guarding deep storage
+    for (const edef of MOONBASE_ENEMY_SPAWNS) {
+      new EnemyAI(this.game, scene, new Vector3(edef.x, 1, edef.z), {
+        ranged: edef.ranged,
+        behavior: edef.behavior,
+      });
+    }
 
     // --- Extraction Zone ---
     // Extract in the East Room
     const extractZone = MeshBuilder.CreateBox("extractionZone", { width: 5, height: 5, depth: 5 }, scene);
     extractZone.position.set(25, 2.5, 20);
-    const extractMat = new StandardMaterial("extractMat", scene);
-    extractMat.diffuseColor = new Color3(0, 1, 0);
-    extractMat.alpha = 0.3;
+    const extractMat = new PBRMaterial("extractMat", scene);
+    extractMat.albedoColor = new Color3(0.04, 0.25, 0.08);
+    extractMat.alpha = 0.34;
+    extractMat.emissiveColor = new Color3(0.15, 0.85, 0.28);
+    extractMat.metallic = 0.15;
+    extractMat.roughness = 0.4;
+    extractMat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHABLEND;
     extractZone.material = extractMat;
     extractZone.isPickable = false;
 

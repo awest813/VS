@@ -1,4 +1,5 @@
 import Dexie, { Table } from 'dexie';
+import { CANONICAL_CONTRACT_SEEDS } from '../contracts/contractRules';
 
 export interface PlayerProfile {
   id?: number;
@@ -31,6 +32,7 @@ export class SaveDB extends Dexie {
   contracts!: Table<Contract>;
 
   constructor() {
+    // Legacy name — keep so existing IndexedDB saves survive the Void Sovereigns rebrand
     super('BunkerExtractionDB');
     this.version(1).stores({
       playerProfile: '++id, name',
@@ -56,11 +58,13 @@ export class SaveDB extends Dexie {
         { itemId: 'medkit', quantity: 2, slot: 'stash' }
       ]);
 
-      // Add initial contracts
-      await this.contracts.bulkAdd([
-        { title: 'Recover Survey Drive', description: 'Board the station, restore transit lift power, descend to moon base, retrieve survey drive from operations room.', reward: 750, isCompleted: false, isActive: false },
-        { title: 'Clear Station Debris', description: 'Eliminate hostiles in the abandoned station corridor.', reward: 300, isCompleted: false, isActive: false }
-      ]);
+      await this.contracts.bulkAdd(
+        CANONICAL_CONTRACT_SEEDS.map((c) => ({
+          ...c,
+          isCompleted: false,
+          isActive: false,
+        }))
+      );
     }
   }
 }

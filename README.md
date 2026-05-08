@@ -1,79 +1,68 @@
-# Bunker Extraction - Single Player FPS
+# Void Sovereigns (FPS)
 
-A Doom 3-style single-player extraction shooter built with Babylon.js, Vite, and React. 
+First-person **extraction** slice set in the **Void Sovereigns** universe: contract work on a failing station stack, a lunar storage line, and green extracts back to your ship. This repo is a **Babylon.js** + **React** + **Dexie** prototype — gameplay is real-time FPS, not the turn-based MMO in the canon project.
 
-In *Bunker Extraction*, you take on contracts to infiltrate corporate stations and abandoned moon bases. Scavenge for loot, survive encounters with hostile security drones, and extract safely to upgrade your loadout.
+**World canon, lore bible, and phase history:** [github.com/awest813/Void-Sovereigns-Online](https://github.com/awest813/Void-Sovereigns-Online) (MIT). Tone and setting follow that material: **NASA-punk** hardware, declining **Void Relay** infrastructure, frontier contracts, slow-burn cosmic mystery.
 
-## Tech Stack
-- **Engine**: Babylon.js 7.0+
-- **Physics**: Havok (WASM)
-- **Framework**: React 18+ (UI Overlay & Terminal)
-- **Build Tool**: Vite
-- **Database**: Dexie.js (IndexedDB for persistent saves)
+## What you do here
 
-## Features (Core MVP)
-- **Interactive Ship Hub:** A physical 3D starting hub where you can view your armory, operate the mission terminal, and prepare for drops.
-- **Dynamic Combat:** Recoil and smooth recovery physics, hitscan weapon system, and enemy AI that tracks, chases, and performs melee attacks.
-- **Persistent Economy & Stash:** Loot gathered during raids (scrap, wire, ammo) is saved to an IndexedDB database via Dexie. Junk can be sold for credits.
-- **Contracts System:** Accept specific missions at the Ship Terminal (e.g., retrieving a Survey Drive), and receive credit payouts upon successful extraction.
-- **Multi-Zone Level Design:** Seamlessly travel from the Ship to the Station, take the elevator down to the sprawling Moon Base, and find extraction zones to return home.
+- **Ship hub** — 3D bridge; operations console for contracts, stash/loadout, armory, docking.  
+- **Raid loop** — Station ↔ moon base; backpack and vitals carry across; death drops the pack; station→ship extract persists stash via IndexedDB.  
+- **Combat** — Hitscan primaries, navmesh AI, surge lighting, concussive pulse gadget, diegetic terminal fragments.
 
-## Getting Started
+## Tech stack
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+| Area | Choice |
+|------|--------|
+| Runtime | TypeScript, Vite 5 |
+| 3D | Babylon.js 7, Havok (WASM), Recast-Detour |
+| UI | React 18 |
+| Saves | Dexie / IndexedDB |
 
-2. Run development server:
-   ```bash
-   npm run dev
-   ```
+## Scripts
 
-3. Build for production:
-   ```bash
-   npm run build
-   ```
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Dev server (port **3000**, `vite.config.ts`) |
+| `npm run build` | `tsc` + production build → `dist/` |
+| `npm run preview` | Preview production build |
+| `npm run test` / `npm run test:watch` | Vitest |
 
-## Development Roadmap
+## Quick start
 
-### Phase 1: Core Systems (Completed)
-- [x] Basic Babylon.js scene management
-- [x] FPS Controller & Havok Physics integration
-- [x] React UI overlay for HUD
-- [x] SaveDB implementation using Dexie
+```bash
+npm install
+npm run dev
+```
 
-### Phase 2: Gameplay Loop (Completed)
-- [x] Physical Ship Hub environment
-- [x] Functional extraction mechanics
-- [x] Inventory persistence across level transitions
-- [x] Economy: Selling junk and receiving contract payouts
+Click the canvas to lock the pointer. **Controls** (raid): WASD, Shift, Space, mouse, E interact, R reload, F flashlight, H medkit, G pulse.
 
-### Phase 3: Progression & Arsenal (Completed)
-- [x] **The Shop:** A terminal in the Ship Hub to spend credits on new weapons and ammo.
-- [x] **Weapon Variety:** Added Shotgun and Pulse Rifle with unique stats and firing mechanics.
-- [x] **Loot Variety:** Randomly generated damage and fire-rate modifiers on looted weapons.
+## Project layout
 
-### Phase 4: Enemy AI & Navigation (Completed)
-- [x] Recast NavMesh for intelligent pathfinding
-- [x] Animated 3D Enemy Models (Idle, Chase, Attack, Death)
-- [x] Advanced AI: Ranged enemies that fire physical projectiles
+```
+src/
+├── App.tsx                 # HUD, ship ops, surge / gadget / terminal UI
+├── main.ts
+├── game/                   # Game host, scenes, AI, contracts, persistence, loot, level defs
+└── ui/uiTokens.ts
+```
 
-### Phase 5: Atmosphere & Polish (Completed)
-- [x] Flashlight battery drain and recharge mechanics
-- [x] Grimy procedural PBR textures for the Moon Base
-- [x] Spatial audio for footsteps and weapon firing
+## Testing
 
-### Phase 6: Expansion & Scaling (Next Up)
-- [ ] **Procedural Generation:** BSP-based random dungeon generation for the Moon Base.
-- [ ] **Boss Fights:** Large scale boss encounters guarding high-tier loot.
-- [ ] **Consumables:** Fully implementing Medkit usage and throwable grenades.
+```bash
+npm run test
+```
 
-## Project Structure
-- `src/game/`: Core game logic and engine coordinator.
-- `src/game/scenes/`: Babylon.js scene definitions (ShipHub, Station, MoonBase).
-- `src/game/player/`: Player controller, movement, and weapons.
-- `src/game/ai/`: Enemy state machines, pathfinding, and behaviors.
-- `src/game/persistence/`: Local save database using Dexie.
-- `src/App.tsx`: React UI overlay and Ship Terminal interface.
-- `src/main.ts`: Entry point.
+Uses `fake-indexeddb` for persistence tests (`vitest.setup.ts`).
+
+## Saves
+
+The IndexedDB database id is still `BunkerExtractionDB` internally so existing local saves keep working; only the product name and copy are rebranded.
+
+## License
+
+This FPS prototype does not yet declare a public license; the **canon** repository above is **MIT**. Attribute setting and terminology to **Void Sovereigns Online** when reusing lore.
+
+---
+
+*Version 0.1.0 · Not affiliated with the Phaser MMO repo beyond shared setting.*
