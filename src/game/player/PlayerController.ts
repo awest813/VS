@@ -396,18 +396,20 @@ export class PlayerController {
   }
 
   public takeDamage(amount: number) {
+    if (this.health <= 0) return;
     this.health = Math.max(0, this.health - amount);
     console.log(`Player hit! Health: ${this.health}`);
-    
-    // Camera shake
+
+    // Camera shake — guard restore against disposal during the 100ms window (death → scene swap).
     const originalFov = this.camera.fov;
     this.camera.fov = originalFov * 1.05;
     setTimeout(() => {
-        if (this.camera) this.camera.fov = originalFov;
+        if (this.camera && !this.camera.isDisposed()) this.camera.fov = originalFov;
     }, 100);
 
     if (this.health <= 0) {
       console.warn('Raid failed — casualty. Salvaged raid backpack is forfeited.');
+      window.dispatchEvent(new CustomEvent('raidPlayerDeath'));
       queueMicrotask(() => {
         if (this.game.stateMachine.getState() === GameState.SHIP) return;
         this.game.raidInventory = [];

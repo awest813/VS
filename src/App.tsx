@@ -158,8 +158,40 @@ const App: React.FC<AppProps> = ({ game }) => {
 
   useEffect(() => {
     const onGadget = () => setToast('Concussive pulse · hostiles slowed in radius.');
+    const onLoot = (e: Event) => {
+      const ce = e as CustomEvent<{ itemId?: string; quantity?: number; isObjective?: boolean }>;
+      const id = ce.detail?.itemId;
+      if (!id) return;
+      const qty = Math.max(1, ce.detail?.quantity ?? 1);
+      const label = formatItemId(id);
+      if (ce.detail?.isObjective || id === 'survey_drive') {
+        setToast(`Objective secured · ${label} in pack. Extract via green to bank.`);
+      } else {
+        setToast(`Looted ${label} ×${qty} · forfeit on death until you green-extract.`);
+      }
+    };
+    const onExtract = (e: Event) => {
+      const ce = e as CustomEvent<{ paidContractTitle?: string | null; paidContractReward?: number; itemCount?: number }>;
+      const title = ce.detail?.paidContractTitle ?? null;
+      const reward = ce.detail?.paidContractReward ?? 0;
+      if (title) {
+        setToast(`Contract complete · ${title} · +¤ ${reward.toLocaleString()}.`);
+      } else {
+        const items = ce.detail?.itemCount ?? 0;
+        setToast(items > 0 ? `Extracted to ship · ${items} stack${items === 1 ? '' : 's'} banked to stash.` : 'Extracted to ship · empty pack.');
+      }
+    };
+    const onDeath = () => setToast('Raid failed · backpack forfeited. Restage in ship ops.');
     window.addEventListener('raidGadgetDeployed', onGadget);
-    return () => window.removeEventListener('raidGadgetDeployed', onGadget);
+    window.addEventListener('raidLootPicked', onLoot as EventListener);
+    window.addEventListener('raidExtractComplete', onExtract as EventListener);
+    window.addEventListener('raidPlayerDeath', onDeath);
+    return () => {
+      window.removeEventListener('raidGadgetDeployed', onGadget);
+      window.removeEventListener('raidLootPicked', onLoot as EventListener);
+      window.removeEventListener('raidExtractComplete', onExtract as EventListener);
+      window.removeEventListener('raidPlayerDeath', onDeath);
+    };
   }, []);
 
   useEffect(() => {

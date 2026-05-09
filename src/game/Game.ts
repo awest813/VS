@@ -123,6 +123,9 @@ export class Game {
       this.raidEnvironmentalSurge = false;
       this.raidGadgetSlowUntil = 0;
       this.raidGadgetReadyAtMs = 0;
+      // Defensive: kill counter is gated by station entry too, but reset on hub return so
+      // a partial raid that exited via death/abort can't leak progress into the next dock.
+      this.enemiesKilledStation = 0;
     }
 
     switch (state) {

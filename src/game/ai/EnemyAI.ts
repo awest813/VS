@@ -54,6 +54,10 @@ export class EnemyAI {
   private animGroups: AnimationGroup[] = [];
   private currentAnim: string = "";
 
+  /** Timers + observers we own — cleared on scene dispose so cross-scene damage / model loads can't leak into a fresh raid or ship hub. */
+  private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
+  private sceneDisposed = false;
+
   constructor(game: Game, scene: Scene, position: Vector3, options: boolean | EnemySpawnOptions = false) {
     this.game = game;
     this.scene = scene;
@@ -86,6 +90,12 @@ export class EnemyAI {
     
     // Load Animated Model
     SceneLoader.ImportMeshAsync('', BABYLON_MODELS, 'alien.glb', scene).then((result) => {
+        // Scene may have torn down (state change, death) before glTF import resolved.
+        if (this.sceneDisposed || this.isDead || !this.mesh || this.mesh.isDisposed()) {
+            for (const m of result.meshes) m.dispose();
+            for (const g of result.animationGroups) g.dispose();
+            return;
+        }
         this.modelRoot = result.meshes[0];
         this.modelRoot.parent = this.mesh;
         this.modelRoot.position.y = -0.9;
@@ -113,6 +123,13 @@ export class EnemyAI {
     };
 
     scene.onBeforeRenderObservable.add(() => this.update());
+
+    scene.onDisposeObservable.add(() => {
+      this.sceneDisposed = true;
+      this.isDead = true;
+      this.pendingTimers.forEach((t) => clearTimeout(t));
+      this.pendingTimers.clear();
+    });
   }
 
   /** Ranged vs melee readable at range (few enemy types, loud roles). */
@@ -247,6 +264,11 @@ export class EnemyAI {
   private attackPlayer() {
     this.playAnim("Attack");
 
+    // Capture the player ref at swing time so a mid-anim scene change (death, extract, descent)
+    // can't have us hit a different player instance loaded by a freshly created scene.
+    const targetPlayer = this.game.player;
+    if (!targetPlayer || !targetPlayer.mesh || targetPlayer.mesh.isDisposed()) return;
+
     if (this.isRanged) {
         const startPos = this.mesh.position.add(new Vector3(0, 1, 0));
         const tracer = MeshBuilder.CreateSphere('tracer', { diameter: 0.28 }, this.scene);
@@ -255,7 +277,7 @@ export class EnemyAI {
         mat.emissiveColor = new Color3(1, 0, 0);
         tracer.material = mat;
 
-        const playerTarget = this.game.player.mesh.position.add(new Vector3(0, 1, 0));
+        const playerTarget = targetPlayer.mesh.position.add(new Vector3(0, 1, 0));
         const direction = playerTarget.subtract(startPos).normalize();
 
         const speed = this.projectileSpeed;
@@ -264,12 +286,17 @@ export class EnemyAI {
 
         const observer = this.scene.onBeforeRenderObservable.add(() => {
             if (tracer.isDisposed()) return;
+            if (this.sceneDisposed || !targetPlayer.mesh || targetPlayer.mesh.isDisposed() || this.game.player !== targetPlayer) {
+                tracer.dispose();
+                this.scene.onBeforeRenderObservable.remove(observer);
+                return;
+            }
             const dt = this.game.engine.getDeltaTime() / 1000;
             tracer.position.addInPlace(direction.scale(speed * dt));
 
-            if (Vector3.Distance(tracer.position, this.game.player.mesh.position) < 1.5) {
-                if (this.game.player && this.game.player.takeDamage) {
-                    this.game.player.takeDamage(this.attackDamage);
+            if (Vector3.Distance(tracer.position, targetPlayer.mesh.position) < 1.5) {
+                if (typeof targetPlayer.takeDamage === 'function') {
+                    targetPlayer.takeDamage(this.attackDamage);
                 }
                 tracer.dispose();
                 this.scene.onBeforeRenderObservable.remove(observer);
@@ -281,11 +308,16 @@ export class EnemyAI {
 
     } else {
         this.pulseMeleeTelegraph();
-        setTimeout(() => {
-            if (this.game.player && this.game.player.takeDamage) {
-                this.game.player.takeDamage(this.attackDamage);
+        const t = setTimeout(() => {
+            this.pendingTimers.delete(t);
+            if (this.isDead || this.sceneDisposed) return;
+            if (this.game.player !== targetPlayer) return;
+            if (!targetPlayer.mesh || targetPlayer.mesh.isDisposed()) return;
+            if (typeof targetPlayer.takeDamage === 'function') {
+                targetPlayer.takeDamage(this.attackDamage);
             }
         }, 500); // Delay damage to sync with animation roughly
+        this.pendingTimers.add(t);
     }
   }
 
@@ -306,16 +338,24 @@ export class EnemyAI {
 
     if (this.game.stateMachine.getState() === GameState.STATION) {
       this.game.enemiesKilledStation++;
+      window.dispatchEvent(
+        new CustomEvent('raidStationKill', {
+          detail: { stationKills: this.game.enemiesKilledStation },
+        })
+      );
     }
-    
+
     this.playAnim("Death");
-    
+
     this.aggregate.body.setMotionType(PhysicsMotionType.STATIC);
     this.mesh.metadata.onHit = null; // Prevent further hits
-    
-    setTimeout(() => {
-        if (this.modelRoot) this.modelRoot.dispose();
-        this.mesh.dispose();
+
+    const t = setTimeout(() => {
+        this.pendingTimers.delete(t);
+        if (this.sceneDisposed) return;
+        if (this.modelRoot && !this.modelRoot.isDisposed()) this.modelRoot.dispose();
+        if (this.mesh && !this.mesh.isDisposed()) this.mesh.dispose();
     }, 5000);
+    this.pendingTimers.add(t);
   }
 }
