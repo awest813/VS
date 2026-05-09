@@ -81,12 +81,14 @@ describe('Raid full flow (integration)', () => {
     const moneyBefore = await profileMoney();
     const inventory = mergeAmmoForShipExtract([{ itemId: 'survey_drive', quantity: 1 }], 0, 0);
 
-    await persistStationRaidExtract({
+    const result = await persistStationRaidExtract({
       inventory,
       stationKillsSinceDock: 0,
     });
 
     expect(await profileMoney()).toBe(moneyBefore + 750);
+    expect(result.paidContractTitle).toBe(SURVEY_DRIVE_CONTRACT_TITLE);
+    expect(result.paidContractReward).toBe(750);
 
     const done = (await db.contracts.toArray()).find((row) => row.title === SURVEY_DRIVE_CONTRACT_TITLE);
     expect(done?.isCompleted).toBe(true);
@@ -98,6 +100,16 @@ describe('Raid full flow (integration)', () => {
       .filter((r) => r.slot === 'stash')
       .first();
     expect(driveInStash?.quantity).toBe(1);
+  });
+
+  it('extract result reports no payout when contract goal not met', async () => {
+    await setActiveContractByTitle(SURVEY_DRIVE_CONTRACT_TITLE);
+    const result = await persistStationRaidExtract({
+      inventory: mergeAmmoForShipExtract([{ itemId: 'scrap_metal', quantity: 1 }], 0, 0),
+      stationKillsSinceDock: 0,
+    });
+    expect(result.paidContractTitle).toBeNull();
+    expect(result.paidContractReward).toBe(0);
   });
 
   it('station debris raid: payout when kill threshold met; no payout below threshold', async () => {

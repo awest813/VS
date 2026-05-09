@@ -70,23 +70,28 @@ export class StationScene {
     ambient.intensity = baseAmbientIntensity;
     ambient.diffuse = new Color3(0.72, 0.76, 0.88);
 
+    const navMeshes: import('@babylonjs/core').Mesh[] = [];
+
     const floor = MeshBuilder.CreateBox('floor', { width: 15, height: 1, depth: 40 }, scene);
     floor.position.y = -0.5;
     floor.material = floorMat;
     floor.metadata = { ...(floor.metadata ?? {}), surfaceSound: 'metal' };
     new PhysicsAggregate(floor, PhysicsShapeType.BOX, { mass: 0 }, scene);
+    navMeshes.push(floor);
 
     const wallL = MeshBuilder.CreateBox('wallL', { width: 0.5, height: 5, depth: 40 }, scene);
     wallL.position.x = -7.5;
     wallL.position.y = 2.5;
     wallL.material = wallMat;
     new PhysicsAggregate(wallL, PhysicsShapeType.BOX, { mass: 0 }, scene);
+    navMeshes.push(wallL);
 
     const wallR = MeshBuilder.CreateBox('wallR', { width: 0.5, height: 5, depth: 40 }, scene);
     wallR.position.x = 7.5;
     wallR.position.y = 2.5;
     wallR.material = wallMat;
     new PhysicsAggregate(wallR, PhysicsShapeType.BOX, { mass: 0 }, scene);
+    navMeshes.push(wallR);
 
     const rimCool = new PointLight('rimCool', new Vector3(6, 3.8, -5), scene);
     rimCool.diffuse = new Color3(0.65, 0.78, 1);
@@ -121,6 +126,26 @@ export class StationScene {
         );
       },
     };
+
+    // Build a station-specific navmesh before spawning AI so they don't pathfind on a stale
+    // moonbase grid (`MoonBaseScene` builds its own; without this the corridor pathing is wrong).
+    if (this.game.navigationPlugin) {
+      this.game.navigationPlugin.createNavMesh(navMeshes, {
+        cs: 0.2,
+        ch: 0.2,
+        walkableSlopeAngle: 35,
+        walkableHeight: 1.5,
+        walkableClimb: 0.5,
+        walkableRadius: 1,
+        maxEdgeLen: 12,
+        maxSimplificationError: 1.3,
+        minRegionArea: 6,
+        mergeRegionArea: 20,
+        maxVertsPerPoly: 6,
+        detailSampleDist: 6,
+        detailSampleMaxError: 1,
+      });
+    }
 
     for (const s of STATION_ENEMY_SPAWNS) {
       new EnemyAI(this.game, scene, new Vector3(s.x, s.y ?? 1, s.z), {
@@ -191,11 +216,20 @@ export class StationScene {
 
         void (async () => {
           try {
-            await persistStationRaidExtract({
+            const result = await persistStationRaidExtract({
               inventory,
               stationKillsSinceDock: this.game.enemiesKilledStation,
             });
             console.log('Inventory saved to stash!');
+            window.dispatchEvent(
+              new CustomEvent('raidExtractComplete', {
+                detail: {
+                  paidContractTitle: result.paidContractTitle,
+                  paidContractReward: result.paidContractReward,
+                  itemCount: inventory.length,
+                },
+              })
+            );
           } catch (err) {
             console.error('Failed to save inventory', err);
           } finally {

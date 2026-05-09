@@ -173,6 +173,7 @@ export class MoonBaseScene {
           : LootContainer.fromTable(MOON_STANDARD_CRATE);
 
         crate.metadata = {
+          hudLabel: isObjective ? 'Survey drive crate' : 'Salvage crate',
           type: 'loot_container',
           lootContainer,
           onInteract: () => {
@@ -185,6 +186,15 @@ export class MoonBaseScene {
             }
             mergeRaidLootGrant(this.game.raidInventory, grant);
             console.log('Looted from container:', grant, lootContainer.lootTableId ?? 'fixed');
+            window.dispatchEvent(
+              new CustomEvent('raidLootPicked', {
+                detail: {
+                  itemId: grant.itemId,
+                  quantity: grant.quantity,
+                  isObjective: !!isObjective,
+                },
+              })
+            );
             if (lootContainer.isEmpty) {
               crate.dispose();
             }

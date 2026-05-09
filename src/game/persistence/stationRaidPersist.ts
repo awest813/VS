@@ -3,14 +3,24 @@ import { db, type Contract, type StashItem } from './SaveDB';
 
 export type RaidPersistItem = { itemId: string; quantity: number; stats?: unknown };
 
+export interface StationRaidExtractResult {
+  /** Title of the contract that just paid out, if any. */
+  paidContractTitle: string | null;
+  /** Credits added to the profile from the payout, 0 when nothing settled. */
+  paidContractReward: number;
+}
+
 /**
  * Persists raid inventory into stash, settles active contract payouts, demotes loadout→stash — same semantics as stepping into the station green extract.
+ * Returns a payout summary so callers (raid scene → HUD) can surface a toast.
  */
 export async function persistStationRaidExtract(options: {
   inventory: RaidPersistItem[];
   stationKillsSinceDock: number;
-}): Promise<void> {
+}): Promise<StationRaidExtractResult> {
   const { inventory, stationKillsSinceDock } = options;
+  let paidContractTitle: string | null = null;
+  let paidContractReward = 0;
 
   await db.transaction('rw', db.stashItems, db.contracts, db.playerProfile, async () => {
     for (const item of inventory) {
@@ -59,6 +69,8 @@ export async function persistStationRaidExtract(options: {
 
     if (activeContract && contractPayoutEligible(activeContract, inventory, stationKillsSinceDock)) {
       await payContract(activeContract);
+      paidContractTitle = activeContract.title;
+      paidContractReward = activeContract.reward;
       console.log('Contract Completed!');
     }
 
@@ -67,4 +79,6 @@ export async function persistStationRaidExtract(options: {
       await db.stashItems.update(item.id!, { slot: 'stash' });
     }
   });
+
+  return { paidContractTitle, paidContractReward };
 }
