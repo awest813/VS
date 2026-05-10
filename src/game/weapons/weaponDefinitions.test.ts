@@ -48,7 +48,14 @@ describe('weaponDefinitions', () => {
       const a = WEAPON_ARCHETYPES[id];
       expect(a.viewportMesh.depth).toBeGreaterThan(0.2);
       expect(a.recoilScale).toBeGreaterThan(0);
+      expect(['auto', 'semi']).toContain(a.fireMode);
     }
+  });
+
+  it('shotgun is semi-auto while rifle/pulse remain automatic', () => {
+    expect(WEAPON_ARCHETYPES.shotgun_01.fireMode).toBe('semi');
+    expect(WEAPON_ARCHETYPES.rifle_01.fireMode).toBe('auto');
+    expect(WEAPON_ARCHETYPES.pulse_rifle.fireMode).toBe('auto');
   });
 
   it('weaponReloadBlockedReason', () => {
