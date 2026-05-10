@@ -6,6 +6,7 @@ import {
   applyWeaponLootMods,
   computeReloadTransfer,
   getWeaponArchetype,
+  weaponReloadBlockedReason,
   type WeaponLootMods,
 } from '../weapons/weaponDefinitions';
 import { AudioMix, BabylonPlaygroundSound } from '../audio/babylonPlaygroundSounds';
@@ -234,7 +235,9 @@ export class WeaponController {
       }
 
       // Impact effect
-      this.createImpact(result.pickedPoint!);
+      if (result.pickedPoint) {
+        this.createImpact(result.pickedPoint);
+      }
     }
   }
 
@@ -273,10 +276,14 @@ export class WeaponController {
   }
 
   public reload() {
-    if (this.isReloading || this.currentAmmo === this.maxAmmo || this.reserveAmmo <= 0) return;
+    if (weaponReloadBlockedReason(this.isReloading, this.currentAmmo, this.maxAmmo, this.reserveAmmo)) {
+      return;
+    }
 
     console.log('Reloading...');
     this.isReloading = true;
+    this.triggerHeld = false;
+    this.triggerConsumedForSemi = false;
     if (this.reloadTimer) clearTimeout(this.reloadTimer);
 
     if (this.reloadStartSound) {
