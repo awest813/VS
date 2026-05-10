@@ -1,5 +1,6 @@
 import Dexie, { Table } from 'dexie';
 import { CANONICAL_CONTRACT_SEEDS } from '../contracts/contractRules';
+import { getExtraLoadoutPrimaryIds } from '../hub/loadoutRules';
 
 export interface PlayerProfile {
   id?: number;
@@ -60,6 +61,11 @@ export class SaveDB extends Dexie {
         { itemId: 'ammo_9mm', quantity: 60, slot: 'stash' },
         { itemId: 'medkit', quantity: 2, slot: 'stash' }
       ]);
+    }
+
+    const loadoutItems = await this.stashItems.where('slot').equals('loadout').toArray();
+    for (const extraPrimaryId of getExtraLoadoutPrimaryIds(loadoutItems)) {
+      await this.stashItems.update(extraPrimaryId, { slot: 'stash' });
     }
 
     const contracts = await this.contracts.toArray();

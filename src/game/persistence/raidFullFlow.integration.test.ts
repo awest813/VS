@@ -11,6 +11,7 @@ import {
   STATION_DEBRIS_KILLS_REQUIRED,
   SURVEY_DRIVE_CONTRACT_TITLE,
 } from '../contracts/contractRules';
+import { isPrimaryWeaponItemId } from '../weapons/weaponDefinitions';
 
 async function wipeAndSeed() {
   await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
@@ -58,6 +59,34 @@ describe('Raid full flow (integration)', () => {
     expect(contracts.some((c) => c.title === SURVEY_DRIVE_CONTRACT_TITLE)).toBe(true);
     expect(contracts.some((c) => c.title === STATION_DEBRIS_CONTRACT_TITLE)).toBe(true);
     expect(contracts.some((c) => c.isActive && !c.isCompleted)).toBe(true);
+  });
+
+  it('initializeDefault demotes extra staged primaries from legacy loadouts', async () => {
+    await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
+      await db.playerProfile.clear();
+      await db.stashItems.clear();
+      await db.contracts.clear();
+      await db.playerProfile.add({
+        name: 'Legacy Operative',
+        money: 500,
+        reputation: 0,
+        health: 100,
+      });
+      await db.stashItems.bulkAdd([
+        { itemId: 'rifle_01', quantity: 1, slot: 'loadout' },
+        { itemId: 'shotgun_01', quantity: 1, slot: 'loadout' },
+        { itemId: 'ammo_9mm', quantity: 30, slot: 'loadout' },
+      ]);
+    });
+
+    await db.initializeDefault();
+
+    const loadoutItems = await db.stashItems.where('slot').equals('loadout').toArray();
+    expect(loadoutItems.filter((item) => isPrimaryWeaponItemId(item.itemId))).toHaveLength(1);
+    expect(loadoutItems.some((item) => item.itemId === 'ammo_9mm')).toBe(true);
+
+    const shotgun = await db.stashItems.where('itemId').equals('shotgun_01').first();
+    expect(shotgun?.slot).toBe('stash');
   });
 
   it('from fresh save: staged loadout merges to stash on extract without active contract payout', async () => {
