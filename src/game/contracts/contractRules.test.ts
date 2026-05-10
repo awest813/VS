@@ -8,6 +8,7 @@ import {
   hasSurveyDrive,
   getContractRaidHint,
   contractProgressSummary,
+  hubDockingAllowed,
 } from './contractRules';
 
 describe('contractRules', () => {
@@ -45,5 +46,27 @@ describe('contractRules', () => {
     );
     expect(contractProgressSummary(SURVEY_DRIVE_CONTRACT_TITLE, [], 0)).toContain('survey drive');
     expect(contractProgressSummary(STATION_DEBRIS_CONTRACT_TITLE, [], 1)).toContain('1 /');
+  });
+
+  it('hubDockingAllowed requires active contract unless all are completed', () => {
+    expect(
+      hubDockingAllowed(
+        [
+          { isCompleted: false },
+          { isCompleted: true },
+        ],
+        null
+      )
+    ).toBe(false);
+    expect(hubDockingAllowed([{ isCompleted: true }], null)).toBe(true);
+    expect(
+      hubDockingAllowed(
+        [
+          { isCompleted: false },
+          { isCompleted: true },
+        ],
+        1
+      )
+    ).toBe(true);
   });
 });

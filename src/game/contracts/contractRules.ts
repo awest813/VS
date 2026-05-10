@@ -83,3 +83,11 @@ export function contractProgressSummary(
       return null;
   }
 }
+
+export function hubDockingAllowed(
+  contracts: ReadonlyArray<{ isCompleted: boolean }>,
+  activeContractId: number | null
+): boolean {
+  if (activeContractId !== null) return true;
+  return contracts.every((c) => c.isCompleted);
+}

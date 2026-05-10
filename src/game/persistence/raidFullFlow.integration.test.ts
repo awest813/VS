@@ -39,6 +39,27 @@ describe('Raid full flow (integration)', () => {
     await wipeAndSeed();
   });
 
+  it('initializeDefault backfills canonical contracts and ensures an active open contract', async () => {
+    await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
+      await db.playerProfile.clear();
+      await db.stashItems.clear();
+      await db.contracts.clear();
+      await db.playerProfile.add({
+        name: 'Legacy Operative',
+        money: 500,
+        reputation: 0,
+        health: 100,
+      });
+    });
+
+    await db.initializeDefault();
+
+    const contracts = await db.contracts.toArray();
+    expect(contracts.some((c) => c.title === SURVEY_DRIVE_CONTRACT_TITLE)).toBe(true);
+    expect(contracts.some((c) => c.title === STATION_DEBRIS_CONTRACT_TITLE)).toBe(true);
+    expect(contracts.some((c) => c.isActive && !c.isCompleted)).toBe(true);
+  });
+
   it('from fresh save: staged loadout merges to stash on extract without active contract payout', async () => {
     const rifle = await db.stashItems.where('itemId').equals('rifle_01').first();
     const ammoRow = await db.stashItems.where('itemId').equals('ammo_9mm').first();
