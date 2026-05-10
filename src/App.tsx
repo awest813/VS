@@ -8,6 +8,7 @@ import { db, StashItem, Contract } from './game/persistence/SaveDB';
 import {
   getContractRaidHint,
   contractProgressSummary,
+  hubDockingAllowed,
 } from './game/contracts/contractRules';
 import { ARMORY_PRIMARY_OFFERS, getWeaponRaidHudHint } from './game/weapons/weaponDefinitions';
 import { getLootDefinition, lootTradeInCredits } from './game/loot/lootDatabase';
@@ -307,6 +308,7 @@ const App: React.FC<AppProps> = ({ game }) => {
     healthPct > 55 ? 'linear-gradient(90deg, #34d399, #10b981)' : healthPct > 28 ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #fb7185, #ef4444)';
 
   const completedContracts = contracts.filter((c) => c.isCompleted);
+  const canDockFromHub = hubDockingAllowed(contracts, activeContractId);
   const activeRaidContract = contracts.find((c) => c.isActive && !c.isCompleted);
   const raidContractZone =
     gameState === GameState.STATION ? 'station' : gameState === GameState.MOON_BASE ? 'moon' : null;
@@ -820,33 +822,37 @@ const App: React.FC<AppProps> = ({ game }) => {
             Void Sovereigns — ship ops
           </h1>
           <p style={{ margin: '0 0 20px 0', fontSize: 12, color: 'rgba(160, 175, 200, 0.82)' }}>
-            <span style={{ fontFamily: fontMono, color: 'rgba(180, 215, 255, 0.9)' }}>Esc</span> or backdrop click to close · Same data as the cyan bridge screen · Select one contract before docking
+            <span style={{ fontFamily: fontMono, color: 'rgba(180, 215, 255, 0.9)' }}>Esc</span> or backdrop click to close · Same data as the cyan bridge screen ·
+            {' '}
+            {contracts.some((c) => !c.isCompleted)
+              ? 'Select one contract before docking'
+              : 'All contracts complete — free docking is available'}
           </p>
           <h2 style={{ color: '#fde68a', margin: '0 0 22px 0', fontSize: 'clamp(1.05rem, 2vw, 1.35rem)', fontFamily: fontMono, fontWeight: 550 }}>¤ {money.toLocaleString()}</h2>
           <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               type="button"
-              aria-label={activeContractId ? 'Dock with station and begin raid' : 'Select a contract below before docking'}
-              title={!activeContractId ? 'Activate a contract on the right to unlock docking' : undefined}
+              aria-label={canDockFromHub ? 'Dock with station and begin raid' : 'Select a contract below before docking'}
+              title={!canDockFromHub ? 'Activate a contract on the right to unlock docking' : undefined}
               onClick={() => {
                 setIsShipUIOpen(false);
                 game.stateMachine.setState(GameState.STATION);
               }}
-              disabled={!activeContractId}
+              disabled={!canDockFromHub}
               style={{
                 padding: '14px 28px',
                 fontSize: 15,
                 fontFamily: fontUi,
                 fontWeight: 600,
-                cursor: activeContractId ? 'pointer' : 'not-allowed',
-                background: activeContractId ? 'linear-gradient(180deg, #b91c1c, #7f1d1d)' : 'rgba(60, 65, 75, 0.8)',
-                color: activeContractId ? '#fff' : 'rgba(180, 185, 195, 0.6)',
+                cursor: canDockFromHub ? 'pointer' : 'not-allowed',
+                background: canDockFromHub ? 'linear-gradient(180deg, #b91c1c, #7f1d1d)' : 'rgba(60, 65, 75, 0.8)',
+                color: canDockFromHub ? '#fff' : 'rgba(180, 185, 195, 0.6)',
                 border: '1px solid rgba(255,255,255,0.12)',
                 borderRadius: 8,
                 letterSpacing: '0.06em',
               }}
             >
-              {activeContractId ? 'DOCK WITH STATION' : 'SELECT A CONTRACT'}
+              {canDockFromHub ? 'DOCK WITH STATION' : 'SELECT A CONTRACT'}
             </button>
             <button
               type="button"

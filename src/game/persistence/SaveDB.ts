@@ -51,13 +51,19 @@ export class SaveDB extends Dexie {
         health: 100
       });
 
-      // Add some starting items
+    }
+
+    const stashCount = await this.stashItems.count();
+    if (stashCount === 0) {
       await this.stashItems.bulkAdd([
         { itemId: 'rifle_01', quantity: 1, slot: 'stash' },
         { itemId: 'ammo_9mm', quantity: 60, slot: 'stash' },
         { itemId: 'medkit', quantity: 2, slot: 'stash' }
       ]);
+    }
 
+    const contracts = await this.contracts.toArray();
+    if (contracts.length === 0) {
       await this.contracts.bulkAdd(
         CANONICAL_CONTRACT_SEEDS.map((c) => ({
           ...c,
@@ -65,6 +71,26 @@ export class SaveDB extends Dexie {
           isActive: false,
         }))
       );
+    } else {
+      const byTitle = new Set(contracts.map((c) => c.title));
+      for (const seed of CANONICAL_CONTRACT_SEEDS) {
+        if (byTitle.has(seed.title)) continue;
+        await this.contracts.add({
+          ...seed,
+          isCompleted: false,
+          isActive: false,
+        });
+      }
+    }
+
+    const afterSeed = await this.contracts.toArray();
+    const hasActiveOpen = afterSeed.some((c) => c.isActive && !c.isCompleted);
+    if (!hasActiveOpen) {
+      const firstOpen = afterSeed.find((c) => !c.isCompleted);
+      if (firstOpen?.id !== undefined) {
+        await this.contracts.toCollection().modify({ isActive: false });
+        await this.contracts.update(firstOpen.id, { isActive: true });
+      }
     }
   }
 }
