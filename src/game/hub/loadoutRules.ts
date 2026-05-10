@@ -3,6 +3,7 @@ import { isPrimaryWeaponItemId } from '../weapons/weaponDefinitions';
 
 type LoadoutItem = Pick<StashItem, 'id' | 'itemId' | 'slot'>;
 
+/** Returns duplicate staged-primary ids so legacy loadouts keep only the first active primary. */
 export function getExtraLoadoutPrimaryIds(items: ReadonlyArray<LoadoutItem>): number[] {
   let keptPrimaryId: number | null = null;
   const extraIds: number[] = [];
@@ -21,6 +22,7 @@ export function getExtraLoadoutPrimaryIds(items: ReadonlyArray<LoadoutItem>): nu
   return extraIds;
 }
 
+/** Returns currently staged primary ids that should be moved back to stash before staging `nextPrimaryId`. */
 export function getLoadoutPrimarySwapIds(
   items: ReadonlyArray<LoadoutItem>,
   nextPrimaryId: number
