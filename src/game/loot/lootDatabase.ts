@@ -89,6 +89,27 @@ export const LOOT_DATABASE: Record<string, LootItemDefinition> = {
     value: 750,
     stackable: false,
   },
+  carbine_mk2: {
+    id: 'carbine_mk2',
+    name: 'Combat carbine',
+    category: 'weapon',
+    rarity: 'rare',
+    weight: 3.0,
+    size: { width: 2, height: 2 },
+    value: 360,
+    stackable: false,
+  },
+  bandage: {
+    id: 'bandage',
+    name: 'Bandage',
+    category: 'medical',
+    rarity: 'common',
+    weight: 0.3,
+    size: { width: 1, height: 1 },
+    value: 15,
+    stackable: true,
+    maxStack: 20,
+  },
 };
 
 export function getLootDefinition(itemId: string): LootItemDefinition | undefined {

@@ -3,12 +3,13 @@
  * persistence flow, and WeaponController runtime.
  */
 
-export type PrimaryWeaponItemId = 'rifle_01' | 'shotgun_01' | 'pulse_rifle';
+export type PrimaryWeaponItemId = 'rifle_01' | 'shotgun_01' | 'pulse_rifle' | 'carbine_mk2';
 
 export const PRIMARY_WEAPON_ITEM_IDS: readonly PrimaryWeaponItemId[] = [
   'rifle_01',
   'shotgun_01',
   'pulse_rifle',
+  'carbine_mk2',
 ] as const;
 
 export function isPrimaryWeaponItemId(id: string): id is PrimaryWeaponItemId {
@@ -99,10 +100,29 @@ const PULSE: WeaponArchetype = {
   recoilScale: 0.82,
 };
 
+const CARBINE: WeaponArchetype = {
+  itemId: 'carbine_mk2',
+  displayName: 'Combat carbine',
+  roleLabel: 'LONG-RANGE · PRECISION',
+  magazineSize: 25,
+  fireMode: 'semi',
+  fireRateMs: 200,
+  hitscanDamage: 32,
+  reloadDurationMs: 1600,
+  pelletCount: 1,
+  spread: 0,
+  hitscanRange: 100,
+  viewportMesh: { width: 0.09, height: 0.088, depth: 0.5 },
+  viewportTintRgb: [0.14, 0.13, 0.1],
+  viewportEmissiveRgb: [0.05, 0.06, 0.08],
+  recoilScale: 1.15,
+};
+
 export const WEAPON_ARCHETYPES: Record<PrimaryWeaponItemId, WeaponArchetype> = {
   rifle_01: RIFLE,
   shotgun_01: SHOTGUN,
   pulse_rifle: PULSE,
+  carbine_mk2: CARBINE,
 };
 
 const MIN_HITSCAN_DAMAGE = 1;
@@ -114,6 +134,7 @@ const MAX_FIRE_RATE_MS = 2500;
 export const ARMORY_PRIMARY_OFFERS: readonly { itemId: PrimaryWeaponItemId; credits: number }[] = [
   { itemId: 'rifle_01', credits: 60 },
   { itemId: 'shotgun_01', credits: 110 },
+  { itemId: 'carbine_mk2', credits: 150 },
   { itemId: 'pulse_rifle', credits: 210 },
 ];
 
