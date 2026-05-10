@@ -31,10 +31,28 @@ describe('weaponDefinitions', () => {
     });
   });
 
+  it('applyWeaponLootMods clamps invalid combat tuning', () => {
+    const base = WEAPON_ARCHETYPES.rifle_01;
+    expect(applyWeaponLootMods(base, { damageMod: -10, fireRateMod: 0 })).toEqual({
+      damage: 1,
+      fireRateMs: 40,
+    });
+    expect(
+      applyWeaponLootMods(base, {
+        damageMod: Number.POSITIVE_INFINITY,
+        fireRateMod: Number.NaN,
+      })
+    ).toEqual({
+      damage: 25,
+      fireRateMs: 150,
+    });
+  });
+
   it('computeReloadTransfer', () => {
     expect(computeReloadTransfer(10, 30, 50)).toEqual({ newMag: 30, newReserve: 30 });
     expect(computeReloadTransfer(30, 30, 99)).toEqual({ newMag: 30, newReserve: 99 });
     expect(computeReloadTransfer(28, 30, 1)).toEqual({ newMag: 29, newReserve: 0 });
+    expect(computeReloadTransfer(-6, 30, -5)).toEqual({ newMag: 0, newReserve: 0 });
   });
 
   it('getWeaponRaidHudHint exposes loud role labels', () => {

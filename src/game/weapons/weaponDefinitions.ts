@@ -105,6 +105,11 @@ export const WEAPON_ARCHETYPES: Record<PrimaryWeaponItemId, WeaponArchetype> = {
   pulse_rifle: PULSE,
 };
 
+const MIN_HITSCAN_DAMAGE = 1;
+const MAX_HITSCAN_DAMAGE = 500;
+const MIN_FIRE_RATE_MS = 40;
+const MAX_FIRE_RATE_MS = 2500;
+
 /** Ship armory — credits; starter save already includes a rifle in stash. */
 export const ARMORY_PRIMARY_OFFERS: readonly { itemId: PrimaryWeaponItemId; credits: number }[] = [
   { itemId: 'rifle_01', credits: 60 },
@@ -123,10 +128,24 @@ export function applyWeaponLootMods(
 ): { damage: number; fireRateMs: number } {
   let damage = archetype.hitscanDamage;
   let fireRateMs = archetype.fireRateMs;
-  if (!mods) return { damage, fireRateMs };
+
+  const clampFinite = (value: number, min: number, max: number, fallback: number): number => {
+    if (!Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+  };
+
+  if (!mods) {
+    return {
+      damage: clampFinite(damage, MIN_HITSCAN_DAMAGE, MAX_HITSCAN_DAMAGE, archetype.hitscanDamage),
+      fireRateMs: clampFinite(fireRateMs, MIN_FIRE_RATE_MS, MAX_FIRE_RATE_MS, archetype.fireRateMs),
+    };
+  }
   if (mods.damageMod != null) damage *= mods.damageMod;
   if (mods.fireRateMod != null) fireRateMs *= mods.fireRateMod;
-  return { damage, fireRateMs };
+  return {
+    damage: clampFinite(damage, MIN_HITSCAN_DAMAGE, MAX_HITSCAN_DAMAGE, archetype.hitscanDamage),
+    fireRateMs: clampFinite(fireRateMs, MIN_FIRE_RATE_MS, MAX_FIRE_RATE_MS, archetype.fireRateMs),
+  };
 }
 
 export function computeReloadTransfer(
