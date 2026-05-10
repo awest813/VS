@@ -85,7 +85,7 @@ export function contractProgressSummary(
 }
 
 export function hubDockingAllowed(
-  contracts: ReadonlyArray<Pick<{ isCompleted: boolean }, 'isCompleted'>>,
+  contracts: ReadonlyArray<{ isCompleted: boolean }>,
   activeContractId: number | null
 ): boolean {
   if (activeContractId !== null) return true;

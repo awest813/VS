@@ -88,7 +88,11 @@ export class SaveDB extends Dexie {
     if (!hasActiveOpen) {
       const firstOpen = afterSeed.find((c) => !c.isCompleted);
       if (firstOpen?.id !== undefined) {
-        await this.contracts.toCollection().modify({ isActive: false });
+        for (const active of afterSeed) {
+          if (active.isActive && active.id !== undefined) {
+            await this.contracts.update(active.id, { isActive: false });
+          }
+        }
         await this.contracts.update(firstOpen.id, { isActive: true });
       }
     }
