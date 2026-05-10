@@ -291,12 +291,13 @@ const App: React.FC<AppProps> = ({ game }) => {
 
   const stageItemToLoadout = async (item: StashItem) => {
     if (item.id === undefined) return;
+    const itemId = item.id;
 
     const swappedPrimaryNames: string[] = [];
     await db.transaction('rw', db.stashItems, async () => {
       if (isPrimaryWeaponItemId(item.itemId)) {
         const allItems = await db.stashItems.toArray();
-        const swapIds = getLoadoutPrimarySwapIds(allItems, item.id);
+        const swapIds = getLoadoutPrimarySwapIds(allItems, itemId);
         for (const swapId of swapIds) {
           const swapItem = allItems.find((row) => row.id === swapId);
           if (swapItem) swappedPrimaryNames.push(formatItemId(swapItem.itemId));
@@ -304,7 +305,7 @@ const App: React.FC<AppProps> = ({ game }) => {
         }
       }
 
-      await db.stashItems.update(item.id, { slot: 'loadout' });
+      await db.stashItems.update(itemId, { slot: 'loadout' });
     });
 
     await refreshDbToState();
@@ -935,8 +936,8 @@ const App: React.FC<AppProps> = ({ game }) => {
                 </button>
               </div>
               <p style={{ fontSize: 11, color: 'rgba(150,165,185,0.85)', margin: '0 0 12px 0', lineHeight: 1.45 }}>
-                Click an item card to stage it into loadout. Staging a new primary swaps the old one back to stash. Junk = scrap metal
-                &amp; copper wire only.
+                Click an item card to stage it into loadout. New primaries swap the old one back to stash. Junk = scrap metal &amp;
+                copper wire only.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, maxHeight: 212, overflowY: 'auto', paddingBottom: 2 }}>
                 {stash.length === 0 ? (

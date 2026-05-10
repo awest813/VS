@@ -8,7 +8,9 @@ export function getExtraLoadoutPrimaryIds(items: ReadonlyArray<LoadoutItem>): nu
   const extraIds: number[] = [];
 
   for (const item of items) {
-    if (item.slot !== 'loadout' || item.id === undefined || !isPrimaryWeaponItemId(item.itemId)) continue;
+    if (item.slot !== 'loadout') continue;
+    if (item.id === undefined) continue;
+    if (!isPrimaryWeaponItemId(item.itemId)) continue;
     if (keptPrimaryId === null) {
       keptPrimaryId = item.id;
       continue;
