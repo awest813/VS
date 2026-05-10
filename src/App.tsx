@@ -13,6 +13,8 @@ import {
 import { ARMORY_PRIMARY_OFFERS, getWeaponRaidHudHint } from './game/weapons/weaponDefinitions';
 import { getLootDefinition, lootTradeInCredits } from './game/loot/lootDatabase';
 import { lootColorForItemId } from './game/loot/lootUi';
+import { getLoadoutPrimarySwapIds } from './game/hub/loadoutRules';
+import { isPrimaryWeaponItemId } from './game/weapons/weaponDefinitions';
 import { hud, humanizeHudTarget } from './ui/uiTokens';
 
 const fontUi = hud.fontUi;
@@ -285,6 +287,39 @@ const App: React.FC<AppProps> = ({ game }) => {
       const label = getLootDefinition(itemId)?.name ?? itemId.replace(/_/g, ' ');
       setToast(`Purchased ${label} (${quantity}×) · check stash.`);
     }
+  };
+
+  const stageItemToLoadout = async (item: StashItem) => {
+    if (item.id === undefined) return;
+    const itemId = item.id;
+
+    const swappedPrimaryNames: string[] = [];
+    await db.transaction('rw', db.stashItems, async () => {
+      if (isPrimaryWeaponItemId(item.itemId)) {
+        const allItems = await db.stashItems.toArray();
+        const swapIds = getLoadoutPrimarySwapIds(allItems, itemId);
+        for (const swapId of swapIds) {
+          const swapItem = allItems.find((row) => row.id === swapId);
+          if (swapItem) swappedPrimaryNames.push(formatItemId(swapItem.itemId));
+          await db.stashItems.update(swapId, { slot: 'stash' });
+        }
+      }
+
+      await db.stashItems.update(itemId, { slot: 'loadout' });
+    });
+
+    await refreshDbToState();
+
+    const label = formatItemId(item.itemId);
+    if (swappedPrimaryNames.length === 1) {
+      setToast(`Staged ${label} · ${swappedPrimaryNames[0]} returned to stash.`);
+      return;
+    }
+    if (swappedPrimaryNames.length > 1) {
+      setToast(`Staged ${label} · previous primaries returned to stash.`);
+      return;
+    }
+    setToast(`Staged ${label} in loadout.`);
   };
 
   const inFirstPerson =
@@ -901,7 +936,8 @@ const App: React.FC<AppProps> = ({ game }) => {
                 </button>
               </div>
               <p style={{ fontSize: 11, color: 'rgba(150,165,185,0.85)', margin: '0 0 12px 0', lineHeight: 1.45 }}>
-                Click an item card to stage it into loadout. Junk = scrap metal &amp; copper wire only.
+                Click an item card to stage it into loadout. New primaries swap the old one back to stash. Junk = scrap metal &amp;
+                copper wire only.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, maxHeight: 212, overflowY: 'auto', paddingBottom: 2 }}>
                 {stash.length === 0 ? (
@@ -915,17 +951,13 @@ const App: React.FC<AppProps> = ({ game }) => {
                       tabIndex={0}
                       role="button"
                       className="ui-card-interactive"
-                      onKeyDown={async (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          await db.stashItems.update(item.id!, { slot: 'loadout' });
-                          await refreshDbToState();
-                        }
-                      }}
-                      onClick={async () => {
-                        await db.stashItems.update(item.id!, { slot: 'loadout' });
-                        await refreshDbToState();
-                      }}
+                       onKeyDown={async (e) => {
+                         if (e.key === 'Enter' || e.key === ' ') {
+                           e.preventDefault();
+                           await stageItemToLoadout(item);
+                         }
+                       }}
+                       onClick={() => void stageItemToLoadout(item)}
                       style={{
                         background: 'rgba(30, 36, 48, 0.92)',
                         padding: '10px 12px',
@@ -947,7 +979,9 @@ const App: React.FC<AppProps> = ({ game }) => {
                 LOADOUT
               </h3>
               <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
-                Click items from stash to stage one primary (rifle, shotgun, or pulse) plus 9×mm for reserves. Staged gear comes with you from the shuttle; ammunition you find mid-raid stays on you until green extract saves it.
+                Click items from stash to stage one primary (rifle, shotgun, or pulse) plus 9×mm for reserves. Staging a new primary
+                automatically swaps the old one out. Staged gear comes with you from the shuttle; ammunition you find mid-raid stays on
+                you until green extract saves it.
               </p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, maxHeight: 212, overflowY: 'auto', paddingBottom: 2 }}>
                 {loadout.length === 0 ? (
@@ -1082,7 +1116,9 @@ const App: React.FC<AppProps> = ({ game }) => {
                 ARMORY
               </h3>
               <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
-                Keep one primary weapon in loadout. Purchased 9×mm goes to stash — move it into loadout before undocking. Mid-raid, R moves reserve rounds into the magazine; rare moon drops can tweak damage and fire rate on that gun.
+                Keep one primary weapon in loadout; staging another from stash swaps the current one back out. Purchased 9×mm goes to stash
+                — move it into loadout before undocking. Mid-raid, R moves reserve rounds into the magazine; rare moon drops can tweak
+                damage and fire rate on that gun.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 212, overflowY: 'auto', paddingRight: 4 }}>
                 {[
