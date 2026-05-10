@@ -28,6 +28,7 @@ export interface WeaponArchetype {
   /** One-line combat fantasy — keep primaries visually distinct (few guns, loud roles). */
   roleLabel: string;
   magazineSize: number;
+  fireMode: 'auto' | 'semi';
   fireRateMs: number;
   hitscanDamage: number;
   reloadDurationMs: number;
@@ -49,6 +50,7 @@ const RIFLE: WeaponArchetype = {
   displayName: 'Assault rifle',
   roleLabel: 'MID-RANGE · CONTROL',
   magazineSize: 30,
+  fireMode: 'auto',
   fireRateMs: 150,
   hitscanDamage: 25,
   reloadDurationMs: 1800,
@@ -66,6 +68,7 @@ const SHOTGUN: WeaponArchetype = {
   displayName: 'Pump shotgun',
   roleLabel: 'CQB · BURST',
   magazineSize: 8,
+  fireMode: 'semi',
   fireRateMs: 800,
   hitscanDamage: 15,
   reloadDurationMs: 2200,
@@ -83,6 +86,7 @@ const PULSE: WeaponArchetype = {
   displayName: 'Pulse rifle',
   roleLabel: 'HIGH ROF · SHRED',
   magazineSize: 60,
+  fireMode: 'auto',
   fireRateMs: 80,
   hitscanDamage: 12,
   reloadDurationMs: 2000,
@@ -157,7 +161,9 @@ export function getWeaponRaidHudHint(itemId: string): string {
   const magFlow =
     a.pelletCount > 1
       ? `${a.pelletCount} pellets — tight indoors, falls off at range`
-      : a.fireRateMs < 100
+      : a.fireMode === 'semi'
+        ? 'Click per shot — control cadence and spacing'
+        : a.fireRateMs < 100
         ? 'Tap or hold — burns ammo fast'
         : 'Tap or hold — steady at medium range';
   return `${a.roleLabel} · ${a.displayName}. ${magFlow}. R loads magazine from reserves (${a.reloadDurationMs / 1000}s).`;

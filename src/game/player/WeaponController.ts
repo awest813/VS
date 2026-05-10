@@ -30,10 +30,12 @@ export class WeaponController {
   private pelletSpread = 0;
   private hitscanRange = 100;
   private reloadDurationMs = 1800;
+  private fireMode: 'auto' | 'semi' = 'auto';
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
   private weaponStats: WeaponLootMods | null = null;
   private recoilScale = 1;
   private triggerHeld = false;
+  private triggerConsumedForSemi = false;
 
   private weaponMesh: Mesh | null = null;
   private fireSound: Sound | null = null;
@@ -93,6 +95,7 @@ export class WeaponController {
     this.pelletSpread = archetype.spread;
     this.hitscanRange = archetype.hitscanRange;
     this.reloadDurationMs = archetype.reloadDurationMs;
+    this.fireMode = archetype.fireMode;
 
     const mod = applyWeaponLootMods(archetype, this.weaponStats);
     this.damage = mod.damage;
@@ -148,11 +151,13 @@ export class WeaponController {
       if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
         if (pointerInfo.event.button === 0) {
           this.triggerHeld = true;
+          this.triggerConsumedForSemi = false;
           this.startFiring();
         }
       } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
         if (pointerInfo.event.button === 0) {
           this.triggerHeld = false;
+          this.triggerConsumedForSemi = false;
         }
       }
     });
@@ -162,19 +167,24 @@ export class WeaponController {
 
   private startFiring() {
     if (this.game.stateMachine.getState() === GameState.SHIP) return;
+    if (this.fireMode === 'semi' && this.triggerConsumedForSemi) return;
     const now = Date.now();
     if (now - this.lastFireTime >= this.fireRate && this.currentAmmo > 0 && !this.isReloading) {
       this.fire();
       this.lastFireTime = now;
+      if (this.fireMode === 'semi') {
+        this.triggerConsumedForSemi = true;
+      }
     }
   }
 
   private updateFiring() {
     if (!this.scene.getEngine().isPointerLock) {
       this.triggerHeld = false;
+      this.triggerConsumedForSemi = false;
       return;
     }
-    if (this.triggerHeld) {
+    if (this.triggerHeld && this.fireMode === 'auto') {
       this.startFiring();
     }
   }
