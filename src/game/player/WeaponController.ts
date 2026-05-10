@@ -33,6 +33,7 @@ export class WeaponController {
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
   private weaponStats: WeaponLootMods | null = null;
   private recoilScale = 1;
+  private triggerHeld = false;
 
   private weaponMesh: Mesh | null = null;
   private fireSound: Sound | null = null;
@@ -59,6 +60,7 @@ export class WeaponController {
 
     this.scene.onBeforeRenderObservable.add(() => {
       this.updateWeaponPosition();
+      this.updateFiring();
       if (this.weaponMesh) {
         this.weaponMesh.isVisible = this.game.stateMachine.getState() !== GameState.SHIP;
       }
@@ -145,7 +147,12 @@ export class WeaponController {
     this.pointerObserver = this.scene.onPointerObservable.add((pointerInfo) => {
       if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
         if (pointerInfo.event.button === 0) {
+          this.triggerHeld = true;
           this.startFiring();
+        }
+      } else if (pointerInfo.type === PointerEventTypes.POINTERUP) {
+        if (pointerInfo.event.button === 0) {
+          this.triggerHeld = false;
         }
       }
     });
@@ -159,6 +166,16 @@ export class WeaponController {
     if (now - this.lastFireTime >= this.fireRate && this.currentAmmo > 0 && !this.isReloading) {
       this.fire();
       this.lastFireTime = now;
+    }
+  }
+
+  private updateFiring() {
+    if (!this.scene.getEngine().isPointerLock) {
+      this.triggerHeld = false;
+      return;
+    }
+    if (this.triggerHeld) {
+      this.startFiring();
     }
   }
 
