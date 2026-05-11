@@ -37,7 +37,7 @@ export const hud = {
 
 export function humanizeHudTarget(slug: string): string {
   const withoutUnderscores = slug.replace(/_/g, ' ');
-  const normalized = withoutUnderscores.trim().replace(/\s+/g, ' ').toLowerCase();
+  const normalized = withoutUnderscores.trim().replace(/\s+/g, ' ');
   if (!normalized) return '';
-  return normalized.replace(/\b\w/g, (ch) => ch.toUpperCase());
+  return normalized.replace(/\b\w+\b/g, (word) => word[0].toUpperCase() + word.slice(1).toLowerCase());
 }
