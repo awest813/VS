@@ -21,8 +21,11 @@ import { BABYLON_ENV_SPECULAR } from '../loaders/BabylonAssetUrls';
 import { applyBabylonIBL } from '../loaders/applyBabylonIBL';
 import { createIndustrialBump, makePbrMetalPanel } from '../loaders/IndustrialMaterials';
 import { doom3FacilityAmbient } from '../level/idTech4Inspired';
-import { STATION_ENEMY_SPAWNS } from '../level/stationDefs';
+import { STATION_CRATE_SPAWNS, STATION_ENEMY_SPAWNS } from '../level/stationDefs';
 import { environmentalSurgeActiveAt } from '../raid/raidEnvironment';
+import { LootContainer } from '../loot/LootContainer';
+import { STATION_STANDARD_CRATE } from '../loot/lootTables';
+import { mergeRaidLootGrant } from '../loot/raidInventoryMerge';
 
 export class StationScene {
   private game: Game;
@@ -152,6 +155,43 @@ export class StationScene {
         ranged: s.ranged,
         behavior: s.behavior,
       });
+    }
+
+    // Loot containers scattered through the corridor
+    const crateMat = new PBRMaterial('statCrateMat', scene);
+    crateMat.albedoColor = new Color3(0.3, 0.34, 0.38);
+    crateMat.metallic = 0.6;
+    crateMat.roughness = 0.55;
+
+    for (const cdef of STATION_CRATE_SPAWNS) {
+      const crate = MeshBuilder.CreateBox(cdef.meshId, { size: 1.1 }, scene);
+      crate.position.set(cdef.x, 0.55, cdef.z);
+      crate.material = crateMat;
+      new PhysicsAggregate(crate, PhysicsShapeType.BOX, { mass: 2 }, scene);
+
+      const lootContainer = LootContainer.fromTable(STATION_STANDARD_CRATE);
+      crate.metadata = {
+        hudLabel: 'Supply crate',
+        type: 'loot_container',
+        lootContainer,
+        onInteract: () => {
+          if (!this.game.player) return;
+          const grant = lootContainer.takeNext();
+          if (!grant) {
+            crate.dispose();
+            return;
+          }
+          mergeRaidLootGrant(this.game.raidInventory, grant);
+          window.dispatchEvent(
+            new CustomEvent('raidLootPicked', {
+              detail: { itemId: grant.itemId, quantity: grant.quantity, isObjective: false },
+            })
+          );
+          if (lootContainer.isEmpty) {
+            crate.dispose();
+          }
+        },
+      };
     }
 
     const player = new PlayerController(this.game, scene, new Vector3(0, 3, 0));

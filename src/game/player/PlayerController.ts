@@ -14,6 +14,8 @@ import { AudioMix, BabylonPlaygroundSound } from '../audio/babylonPlaygroundSoun
 
 /** Shared with HUD cooldown bar — keep one source of truth. */
 export const RAID_MEDKIT_COOLDOWN_MS = 9000;
+/** Bandage heals less than medkit but recharges twice as fast. */
+export const RAID_BANDAGE_COOLDOWN_MS = 4500;
 
 export class PlayerController {
   private scene: Scene;
@@ -37,6 +39,13 @@ export class PlayerController {
   public battery: number = 100;
   public maxBattery: number = 100;
   public flashlightOn: boolean = true;
+
+  // Stamina
+  public stamina: number = 100;
+  public maxStamina: number = 100;
+  /** True while stamina is recovering from a depleted state (requires hitting recharge threshold). */
+  private staminaDepleted = false;
+  private bandageReadyAtMs = 0;
 
   // Audio
   private footstepSound: Sound;
@@ -136,7 +145,7 @@ export class PlayerController {
         if (item.itemId === 'ammo_9mm') {
           continue;
         }
-        if (item.itemId === 'medkit') {
+        if (item.itemId === 'medkit' || item.itemId === 'bandage') {
           this.inventory.push({ itemId: item.itemId, quantity: item.quantity });
         } else if (isPrimaryWeaponItemId(item.itemId)) {
           equippedWeapon = item.itemId;
@@ -195,6 +204,9 @@ export class PlayerController {
     if (e.code === 'KeyH') {
       this.tryUseMedkit();
     }
+    if (e.code === 'KeyB') {
+      this.tryUseBandage();
+    }
     if (e.code === 'KeyG' && !e.repeat) {
       this.tryDeployRaidGadget();
     }
@@ -207,6 +219,11 @@ export class PlayerController {
   /** Ms remaining before H can heal again (0 = ready). Exposed for HUD. */
   public get medkitCooldownRemainingMs(): number {
     return Math.max(0, this.medkitReadyAtMs - Date.now());
+  }
+
+  /** Ms remaining before B can apply a bandage again (0 = ready). Exposed for HUD. */
+  public get bandageCooldownRemainingMs(): number {
+    return Math.max(0, this.bandageReadyAtMs - Date.now());
   }
 
   private tryUseMedkit() {
@@ -232,6 +249,26 @@ export class PlayerController {
   /** Ms until G can fire again — driven by `Game.raidGadgetReadyAtMs`. */
   public get gadgetCooldownRemainingMs(): number {
     return Math.max(0, this.game.raidGadgetReadyAtMs - Date.now());
+  }
+
+  private tryUseBandage() {
+    if (Date.now() < this.bandageReadyAtMs) return;
+    if (this.health >= this.maxHealth) return;
+    const inv = this.game.raidInventory;
+    const idx = inv.findIndex((i) => i.itemId === 'bandage' && i.quantity > 0);
+    if (idx < 0) return;
+    const stack = inv[idx];
+    stack.quantity -= 1;
+    if (stack.quantity <= 0) {
+      inv.splice(idx, 1);
+    }
+    this.health = Math.min(this.maxHealth, this.health + 25);
+    this.bandageReadyAtMs = Date.now() + RAID_BANDAGE_COOLDOWN_MS;
+    this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeMedkit);
+    this.uiBlipSound.setPlaybackRate(
+      AudioMix.uiBlipRateMedkitMin + Math.random() * AudioMix.uiBlipRateMedkitSpan
+    );
+    this.uiBlipSound.play();
   }
 
   private tryDeployRaidGadget() {
@@ -283,7 +320,21 @@ export class PlayerController {
     if (this.inputMap["KeyD"]) right = 1;
 
     const isSprinting = this.inputMap["ShiftLeft"] || this.inputMap["ShiftRight"];
-    const currentSpeed = isSprinting ? this.moveSpeed * this.sprintMultiplier : this.moveSpeed;
+
+    // Stamina: drain while actively sprinting + moving; regen when not sprinting or depleted
+    const isMoving = (this.inputMap["KeyW"] || this.inputMap["KeyS"] || this.inputMap["KeyA"] || this.inputMap["KeyD"]);
+    const sprintDraining = isSprinting && isMoving && this.isGrounded && this.game.stateMachine.getState() !== GameState.SHIP;
+    if (sprintDraining && !this.staminaDepleted) {
+      this.stamina = Math.max(0, this.stamina - 20 * dt);
+      if (this.stamina === 0) this.staminaDepleted = true;
+    } else {
+      const regenRate = this.staminaDepleted ? 8 : 14;
+      this.stamina = Math.min(this.maxStamina, this.stamina + regenRate * dt);
+      if (this.staminaDepleted && this.stamina >= 25) this.staminaDepleted = false;
+    }
+
+    const canSprint = isSprinting && !this.staminaDepleted;
+    const currentSpeed = canSprint ? this.moveSpeed * this.sprintMultiplier : this.moveSpeed;
 
     const moveDirection = new Vector3(right, 0, forward).normalize();
     
@@ -301,6 +352,9 @@ export class PlayerController {
     // Jump (debounce jump SFX — grounded can stay true for multiple ticks)
     if (this.inputMap['Space'] && this.isGrounded) {
       currentVelocity.y = this.jumpForce;
+      // Each jump costs a small amount of stamina
+      this.stamina = Math.max(0, this.stamina - 10);
+      if (this.stamina === 0) this.staminaDepleted = true;
       const now = Date.now();
       if (now - this.lastJumpSoundAt > 320) {
         this.lastJumpSoundAt = now;
@@ -317,7 +371,7 @@ export class PlayerController {
 
     // Footstep Audio (muted on ship hub — deck ambience handled separately)
     if (!onShipHub && this.isGrounded && velocity.lengthSquared() > 0.1) {
-      let stepInterval = isSprinting ? 300 : 500;
+      let stepInterval = canSprint ? 300 : 500;
       if (this.groundSurfaceSound === 'metal') stepInterval *= 0.88;
       const now = Date.now();
       if (now - this.lastFootstepTime > stepInterval) {

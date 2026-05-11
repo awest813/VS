@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react';
 import { Game } from './game/Game';
-import { RAID_MEDKIT_COOLDOWN_MS } from './game/player/PlayerController';
+import { RAID_MEDKIT_COOLDOWN_MS, RAID_BANDAGE_COOLDOWN_MS } from './game/player/PlayerController';
 import { RAID_GADGET_COOLDOWN_MS } from './game/raid/raidGadget';
 import { RAID_LORE_BY_SEGMENT } from './game/level/raidLoreTerminals';
 import { GameState } from './game/StateMachine';
@@ -32,9 +32,11 @@ function formatItemId(id: string): string {
     copper_wire: 'Copper wire',
     ammo_9mm: '9×mm rounds',
     medkit: 'Medkit',
+    bandage: 'Bandage',
     rifle_01: 'Assault rifle',
     shotgun_01: 'Pump shotgun',
     pulse_rifle: 'Pulse rifle',
+    carbine_mk2: 'Combat carbine',
   };
   return map[id] ?? id.replace(/_/g, ' ');
 }
@@ -62,7 +64,9 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [equippedWeaponItemId, setEquippedWeaponItemId] = useState<string>('rifle_01');
   const [toast, setToast] = useState<string | null>(null);
   const [medkitCooldownMs, setMedkitCooldownMs] = useState(0);
+  const [bandageCooldownMs, setBandageCooldownMs] = useState(0);
   const [gadgetCooldownMs, setGadgetCooldownMs] = useState(0);
+  const [stamina, setStamina] = useState({ current: 100, max: 100 });
   const [environmentalSurge, setEnvironmentalSurge] = useState(false);
   const [loreTerminalText, setLoreTerminalText] = useState<string | null>(null);
 
@@ -110,8 +114,10 @@ const App: React.FC<AppProps> = ({ game }) => {
         }
         setHealth({ current: game.player.health, max: game.player.maxHealth });
         setBattery({ current: Math.round(game.player.battery), max: game.player.maxBattery });
+        setStamina({ current: Math.round(game.player.stamina), max: game.player.maxStamina });
         setHoveredTarget(game.player.hoveredInteractable || null);
         setMedkitCooldownMs(game.player.medkitCooldownRemainingMs);
+        setBandageCooldownMs(game.player.bandageCooldownRemainingMs);
       } else {
         setGadgetCooldownMs(0);
       }
@@ -328,10 +334,12 @@ const App: React.FC<AppProps> = ({ game }) => {
   const showPointerHint = inFirstPerson && !pointerLocked;
   const healthPct = health.max > 0 ? Math.min(100, (health.current / health.max) * 100) : 0;
   const batteryPct = battery.max > 0 ? Math.min(100, (battery.current / battery.max) * 100) : 0;
+  const staminaPct = stamina.max > 0 ? Math.min(100, (stamina.current / stamina.max) * 100) : 0;
   const ammoLow = ammo.max > 0 && ammo.current <= Math.max(1, Math.floor(ammo.max * 0.2));
   const healthLow = healthPct < 28;
   const batteryLow = battery.max > 0 && batteryPct <= 22;
   const batteryCritical = battery.max > 0 && batteryPct < 10;
+  const staminaLow = staminaPct < 20;
   const statusPanelOutline =
     healthLow ? '1px solid rgba(251, 113, 133, 0.38)' : batteryLow ? '1px solid rgba(251, 191, 36, 0.32)' : undefined;
   const batteryBarColor =
@@ -341,6 +349,10 @@ const App: React.FC<AppProps> = ({ game }) => {
 
   const healthBarColor =
     healthPct > 55 ? 'linear-gradient(90deg, #34d399, #10b981)' : healthPct > 28 ? 'linear-gradient(90deg, #fbbf24, #f59e0b)' : 'linear-gradient(90deg, #fb7185, #ef4444)';
+
+  const staminaBarColor = staminaLow
+    ? 'linear-gradient(90deg, #f97316, #ea580c)'
+    : 'linear-gradient(90deg, #a3e635, #65a30d)';
 
   const completedContracts = contracts.filter((c) => c.isCompleted);
   const canDockFromHub = hubDockingAllowed(contracts, activeContractId);
@@ -352,10 +364,15 @@ const App: React.FC<AppProps> = ({ game }) => {
     : null;
 
   const medkitQty = inventory.reduce((n, i) => n + (i.itemId === 'medkit' ? i.quantity : 0), 0);
+  const bandageQty = inventory.reduce((n, i) => n + (i.itemId === 'bandage' ? i.quantity : 0), 0);
   const medkitReadyFillPct =
     medkitCooldownMs <= 0
       ? 100
       : Math.min(100, ((RAID_MEDKIT_COOLDOWN_MS - medkitCooldownMs) / RAID_MEDKIT_COOLDOWN_MS) * 100);
+  const bandageReadyFillPct =
+    bandageCooldownMs <= 0
+      ? 100
+      : Math.min(100, ((RAID_BANDAGE_COOLDOWN_MS - bandageCooldownMs) / RAID_BANDAGE_COOLDOWN_MS) * 100);
 
   const gadgetReadyFillPct =
     gadgetCooldownMs <= 0
@@ -741,6 +758,25 @@ const App: React.FC<AppProps> = ({ game }) => {
                 />
               </div>
             </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: staminaLow ? '#fb923c' : 'rgba(160, 175, 195, 0.9)' }}>Stamina</span>
+                <span style={{ fontFamily: fontMono, fontSize: 13, color: staminaLow ? '#fb923c' : 'rgba(175, 220, 140, 0.92)', fontWeight: staminaLow ? 600 : 400 }}>
+                  {stamina.current}%
+                </span>
+              </div>
+              <div style={{ height: 4, borderRadius: 3, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${staminaPct}%`,
+                    height: '100%',
+                    background: staminaBarColor,
+                    borderRadius: 3,
+                    transition: 'width 0.12s ease, background 0.2s ease',
+                  }}
+                />
+              </div>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
               <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Ammo</span>
               <span
@@ -783,6 +819,30 @@ const App: React.FC<AppProps> = ({ game }) => {
                 />
               </div>
             </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Bandage</span>
+                <span style={{ fontFamily: fontMono, fontSize: 13, color: 'rgba(190, 230, 200, 0.92)' }}>
+                  ×{bandageQty}
+                  {bandageCooldownMs > 0 ? (
+                    <span style={{ color: '#fcd34d', marginLeft: 8 }}>{(bandageCooldownMs / 1000).toFixed(1)}s</span>
+                  ) : (
+                    <span style={{ color: 'rgba(130, 175, 145, 0.75)', marginLeft: 8, fontSize: 11 }}>ready</span>
+                  )}
+                </span>
+              </div>
+              <div style={{ height: 3, borderRadius: 2, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${bandageReadyFillPct}%`,
+                    height: '100%',
+                    background: 'linear-gradient(90deg, #6ee7b7, #059669)',
+                    borderRadius: 2,
+                    transition: 'width 0.12s linear',
+                  }}
+                />
+              </div>
+            </div>
             <div style={{ marginTop: 12, marginBottom: 10 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
                 <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Pulse (gadget)</span>
@@ -811,7 +871,7 @@ const App: React.FC<AppProps> = ({ game }) => {
               <span style={{ fontFamily: fontMono }}>Shift</span> · Jump <span style={{ fontFamily: fontMono }}>Space</span> · Fire mouse ·{' '}
               <span style={{ fontFamily: fontMono }}>E</span> interact · <span style={{ fontFamily: fontMono }}>R</span> reload ·{' '}
               <span style={{ fontFamily: fontMono }}>F</span> flashlight · <span style={{ fontFamily: fontMono }}>H</span> medkit (
-              {RAID_MEDKIT_COOLDOWN_MS / 1000}s) · <span style={{ fontFamily: fontMono }}>G</span> pulse ({RAID_GADGET_COOLDOWN_MS / 1000}s)
+              {RAID_MEDKIT_COOLDOWN_MS / 1000}s) · <span style={{ fontFamily: fontMono }}>B</span> bandage ({RAID_BANDAGE_COOLDOWN_MS / 1000}s) · <span style={{ fontFamily: fontMono }}>G</span> pulse ({RAID_GADGET_COOLDOWN_MS / 1000}s)
             </p>
           </div>
         </div>
@@ -1129,6 +1189,7 @@ const App: React.FC<AppProps> = ({ game }) => {
                   })),
                   { id: 'ammo_9mm', name: 'Ammo ×30', cost: 20, qty: 30 },
                   { id: 'medkit', name: 'Medkit', cost: 50 },
+                  { id: 'bandage', name: 'Bandage ×3', cost: 25, qty: 3 },
                 ].map((item) => (
                   <div
                     key={item.id}

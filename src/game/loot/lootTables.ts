@@ -12,3 +12,17 @@ export const MOON_STANDARD_CRATE: WeightedRaidLootTable = {
     { mode: 'weapon_primary', weight: 20 },
   ],
 };
+
+/** Station transfer-corridor salvage crate. Skews ammo + consumables; weapon drops are rarer. */
+export const STATION_STANDARD_CRATE: WeightedRaidLootTable = {
+  id: 'station_standard_crate',
+  rolls: 1,
+  entries: [
+    { mode: 'item', itemId: 'ammo_9mm', weight: 35, minQuantity: 15, maxQuantity: 40 },
+    { mode: 'item', itemId: 'scrap_metal', weight: 22, minQuantity: 1, maxQuantity: 3 },
+    { mode: 'item', itemId: 'copper_wire', weight: 18, minQuantity: 1, maxQuantity: 2 },
+    { mode: 'item', itemId: 'bandage', weight: 20, minQuantity: 1, maxQuantity: 2 },
+    { mode: 'item', itemId: 'medkit', weight: 10, minQuantity: 1, maxQuantity: 1 },
+    { mode: 'weapon_primary', weight: 12 },
+  ],
+};
