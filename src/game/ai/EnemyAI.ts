@@ -18,6 +18,13 @@ import { Game } from '../Game';
 import { GameState } from '../StateMachine';
 import { BABYLON_MODELS } from '../loaders/BabylonAssetUrls';
 import {
+  createEnemyMovementProfile,
+  planEnemyMovement,
+  type EnemyMovementMemory,
+  type EnemyMovementPoint,
+  type EnemyMovementProfile,
+} from './enemyMovement';
+import {
   RAID_GADGET_SLOW_RADIUS,
   RAID_GADGET_SLOW_SPEED_FACTOR,
 } from '../raid/raidGadget';
@@ -49,6 +56,17 @@ export class EnemyAI {
 
   private isRanged: boolean = false;
   private projectileSpeed = 20;
+  private behavior: EnemyBehavior = 'standard';
+  private movementProfile: EnemyMovementProfile;
+  private spawnPosition: Vector3;
+  private movementMemory: EnemyMovementMemory = {
+    patrolPauseUntil: 0,
+    patrolSeed: 0,
+    patrolTarget: null,
+    lastKnownPlayerPosition: null,
+    strafeDirection: 1,
+    strafeUntil: 0,
+  };
 
   private modelRoot: import("@babylonjs/core").AbstractMesh | null = null;
   private animGroups: AnimationGroup[] = [];
@@ -61,6 +79,7 @@ export class EnemyAI {
   constructor(game: Game, scene: Scene, position: Vector3, options: boolean | EnemySpawnOptions = false) {
     this.game = game;
     this.scene = scene;
+    this.spawnPosition = position.clone();
 
     const opts: EnemySpawnOptions =
       typeof options === 'boolean' ? { ranged: options } : { ranged: false, ...options };
@@ -72,11 +91,13 @@ export class EnemyAI {
       this.attackCooldown = 800;
     }
 
-    const behavior = opts.behavior ?? 'standard';
-    if (behavior === 'rusher') {
+    this.behavior = opts.behavior ?? 'standard';
+    this.movementProfile = createEnemyMovementProfile(this.behavior, this.isRanged);
+
+    if (this.behavior === 'rusher') {
       this.speed *= 1.32;
       this.aggroRange = 18;
-    } else if (behavior === 'anchored') {
+    } else if (this.behavior === 'anchored') {
       this.speed *= 0.72;
       this.aggroRange = 12;
       if (this.isRanged) {
@@ -188,77 +209,99 @@ export class EnemyAI {
     if (!playerPos || !enemyPos) return;
 
     const distToPlayer = Vector3.Distance(playerPos, enemyPos);
+    const now = Date.now();
 
     let chaseAggro = this.aggroRange;
     if (this.game.raidEnvironmentalSurge) {
       chaseAggro += 4;
     }
 
+    const movementPlan = planEnemyMovement({
+      now,
+      home: this.toMovementPoint(this.spawnPosition),
+      enemy: this.toMovementPoint(enemyPos),
+      player: this.toMovementPoint(playerPos),
+      playerDetected: distToPlayer < chaseAggro,
+      playerDistance: distToPlayer,
+      attackRange: this.attackRange,
+      profile: this.movementProfile,
+      memory: this.movementMemory,
+    });
+    this.movementMemory = movementPlan.nextMemory;
+
     if (distToPlayer < chaseAggro) {
-      // Look at player (rotate collider, model follows)
       this.mesh.lookAt(new Vector3(playerPos.x, enemyPos.y, playerPos.z));
+    } else if (movementPlan.destination) {
+      this.mesh.lookAt(new Vector3(movementPlan.destination.x, enemyPos.y, movementPlan.destination.z));
+    }
 
-      if (distToPlayer > this.attackRange) {
-        // Pathfinding
-        let targetPos = playerPos;
-        if (this.game.navigationPlugin) {
-            const path = this.game.navigationPlugin.computePath(
-                this.game.navigationPlugin.getClosestPoint(enemyPos),
-                this.game.navigationPlugin.getClosestPoint(playerPos)
-            );
-            if (path && path.length > 1) {
-                targetPos = path[1]; // Move to next waypoint
-            }
-        }
-
-        const direction = targetPos.subtract(enemyPos);
-        direction.y = 0;
-        direction.normalize();
-
-        let moveSpeed = this.speed;
-        if (this.game.raidEnvironmentalSurge) {
-          moveSpeed *= 1.1;
-        }
-
-        const planarVel = direction.scale(moveSpeed);
-        let vx = planarVel.x;
-        let vz = planarVel.z;
-
-        const gadgetSlow =
-          Date.now() < this.game.raidGadgetSlowUntil &&
-          distToPlayer < RAID_GADGET_SLOW_RADIUS;
-        if (gadgetSlow) {
-          vx *= RAID_GADGET_SLOW_SPEED_FACTOR;
-          vz *= RAID_GADGET_SLOW_SPEED_FACTOR;
-        }
-
-        if (this.aggregate && this.aggregate.body) {
-          const currentVel = this.aggregate.body.getLinearVelocity();
-          this.aggregate.body.setLinearVelocity(new Vector3(vx, currentVel.y, vz));
-        }
-        this.playAnim("Run"); // or Walk
-      } else {
-        // Stop moving
-        if (this.aggregate && this.aggregate.body) {
-          const currentVel = this.aggregate.body.getLinearVelocity();
-          this.aggregate.body.setLinearVelocity(new Vector3(0, currentVel.y, 0));
-        }
-
-        // Attack
-        const now = Date.now();
-        if (now - this.lastAttackTime > this.attackCooldown) {
-          this.attackPlayer();
-          this.lastAttackTime = now;
+    if (movementPlan.destination) {
+      let targetPos = new Vector3(movementPlan.destination.x, enemyPos.y, movementPlan.destination.z);
+      if (this.game.navigationPlugin) {
+        const path = this.game.navigationPlugin.computePath(
+          this.game.navigationPlugin.getClosestPoint(enemyPos),
+          this.game.navigationPlugin.getClosestPoint(targetPos)
+        );
+        if (path && path.length > 1) {
+          targetPos = path[1];
         }
       }
+
+      const direction = targetPos.subtract(enemyPos);
+      direction.y = 0;
+      if (direction.lengthSquared() > 0.0001) {
+        direction.normalize();
+      }
+
+      let moveSpeed = this.speed;
+      if (movementPlan.mode === 'patrol') {
+        moveSpeed *= 0.72;
+      } else if (movementPlan.mode === 'investigate') {
+        moveSpeed *= 0.9;
+      } else if (movementPlan.mode === 'strafe') {
+        moveSpeed *= 0.84;
+      }
+      if (this.game.raidEnvironmentalSurge) {
+        moveSpeed *= 1.1;
+      }
+
+      const planarVel = direction.scale(moveSpeed);
+      let vx = planarVel.x;
+      let vz = planarVel.z;
+
+      const gadgetSlow =
+        now < this.game.raidGadgetSlowUntil &&
+        distToPlayer < RAID_GADGET_SLOW_RADIUS;
+      if (gadgetSlow) {
+        vx *= RAID_GADGET_SLOW_SPEED_FACTOR;
+        vz *= RAID_GADGET_SLOW_SPEED_FACTOR;
+      }
+
+      if (this.aggregate && this.aggregate.body) {
+        const currentVel = this.aggregate.body.getLinearVelocity();
+        this.aggregate.body.setLinearVelocity(new Vector3(vx, currentVel.y, vz));
+      }
+      this.playAnim("Run");
     } else {
-      // Idle
       if (this.aggregate && this.aggregate.body) {
         const currentVel = this.aggregate.body.getLinearVelocity();
         this.aggregate.body.setLinearVelocity(new Vector3(0, currentVel.y, 0));
       }
-      this.playAnim("Idle");
+      if (movementPlan.mode !== 'attack') {
+        this.playAnim("Idle");
+      }
     }
+
+    if (movementPlan.mode === 'attack' || movementPlan.mode === 'strafe') {
+      if (now - this.lastAttackTime > this.attackCooldown) {
+        this.attackPlayer();
+        this.lastAttackTime = now;
+      }
+    }
+  }
+
+  private toMovementPoint(position: Vector3): EnemyMovementPoint {
+    return { x: position.x, z: position.z };
   }
 
   private attackPlayer() {
