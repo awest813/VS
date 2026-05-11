@@ -61,6 +61,28 @@ describe('Raid full flow (integration)', () => {
     expect(contracts.some((c) => c.isActive && !c.isCompleted)).toBe(true);
   });
 
+  it('initializeDefault backfills missing permanent upgrade tiers on legacy profiles', async () => {
+    await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
+      await db.playerProfile.clear();
+      await db.stashItems.clear();
+      await db.contracts.clear();
+      await db.playerProfile.add({
+        name: 'Legacy Operative',
+        money: 500,
+        reputation: 0,
+        health: 100,
+      } as any);
+    });
+
+    await db.initializeDefault();
+
+    const profile = await db.playerProfile.toCollection().first();
+    expect(profile?.weaponDamageTier).toBe(0);
+    expect(profile?.weaponHandlingTier).toBe(0);
+    expect(profile?.armorPlatingTier).toBe(0);
+    expect(profile?.servoAssistTier).toBe(0);
+  });
+
   it('initializeDefault demotes extra staged primaries from legacy loadouts', async () => {
     await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
       await db.playerProfile.clear();
