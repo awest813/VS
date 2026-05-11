@@ -123,6 +123,20 @@
         0%, 100% { opacity: 0.75; }
         50%       { opacity: 1; }
       }
+      @keyframes deploy-progress {
+        0% { transform: scaleX(0); }
+        100% { transform: scaleX(1); }
+      }
+      @keyframes pulse {
+        0% { opacity: 0.6; }
+        100% { opacity: 1; }
+      }
+      @keyframes scan-sweep {
+        0% { top: -5%; opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { top: 105%; opacity: 0; }
+      }
       @media (prefers-reduced-motion: reduce) {
         .ui-toast {
           animation: none;
@@ -130,6 +144,90 @@
         @keyframes pulse-vignette {
           0%, 100% { opacity: 1; }
         }
+      }
+      .ui-panel {
+        background: linear-gradient(160deg, rgba(18, 22, 32, 0.94) 0%, rgba(10, 12, 18, 0.96) 100%);
+        border: 1px solid rgba(160, 195, 255, 0.14);
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        position: relative;
+        overflow: hidden;
+      }
+      .ui-panel::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        opacity: 0.025;
+        pointer-events: none;
+      }
+      .ui-bracket {
+        position: relative;
+      }
+      .ui-bracket::before, .ui-bracket::after {
+        content: "";
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        border: 1px solid rgba(56, 189, 248, 0.5);
+        pointer-events: none;
+      }
+      .ui-bracket::before { top: -2px; left: -2px; border-right: none; border-bottom: none; }
+      .ui-bracket::after { bottom: -2px; right: -2px; border-left: none; border-top: none; }
+
+      @keyframes drift {
+        0% { transform: translate(0, 0) scale(1); }
+        50% { transform: translate(-10px, 5px) scale(1.05); }
+        100% { transform: translate(0, 0) scale(1); }
+      }
+      .ui-drift {
+        animation: drift 20s ease-in-out infinite;
+      }
+      .ui-panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255, 255, 255, 0.015) 2px, rgba(255, 255, 255, 0.015) 4px);
+        pointer-events: none;
+        z-index: 10;
+      }
+      @keyframes ui-fade-in {
+        from { opacity: 0; transform: scale(0.98) translateY(8px); }
+        to { opacity: 1; transform: scale(1) translateY(0); }
+      }
+      @keyframes glitch {
+        0% { transform: translate(0); clip-path: inset(0 0 0 0); }
+        10% { transform: translate(-2px, 2px); clip-path: inset(10% 0 30% 0); }
+        20% { transform: translate(2px, -2px); clip-path: inset(40% 0 10% 0); }
+        30% { transform: translate(0); clip-path: inset(0 0 0 0); }
+      }
+      .glitch-effect {
+        animation: glitch 0.3s infinite;
+      }
+      .ui-fade-in {
+        animation: ui-fade-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      .ui-eyebrow {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        margin: 0 0 4px 0;
+      }
+      .ui-eyebrow-ops { color: rgba(148, 163, 184, 0.55); }
+      .ui-eyebrow-hub { color: rgba(150, 185, 220, 0.55); }
+      .ui-eyebrow-contract { color: rgba(180, 200, 240, 0.55); }
+      
+      .contract-card {
+        display: block;
+        width: 100%;
+        text-align: left;
+        font-family: inherit;
+        border-radius: 8px;
+        padding: 12px 14px;
+        transition: all 0.15s ease;
+        margin: 0;
       }
     </style>
   </head>

@@ -52,6 +52,7 @@ describe('Raid full flow (integration)', () => {
         reputation: 0,
         health: 100,
         ...DEFAULT_UPGRADE_STATE,
+        suitClass: 'pathfinder' as const,
       });
     });
 
@@ -96,6 +97,7 @@ describe('Raid full flow (integration)', () => {
         reputation: 0,
         health: 100,
         ...DEFAULT_UPGRADE_STATE,
+        suitClass: 'pathfinder' as const,
       });
       await db.stashItems.bulkAdd([
         { itemId: 'rifle_01', quantity: 1, slot: 'loadout' },

@@ -36,6 +36,14 @@ type ContractDefinition = {
     | {
         kind: 'station_kills';
         requiredKills: number;
+      }
+    | {
+        kind: 'terminal_hack';
+        requiredHacks: number;
+      }
+    | {
+        kind: 'data_retrieval';
+        recoveredId: string;
       };
 };
 
@@ -101,6 +109,28 @@ const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
       itemLabel: 'beacon core',
     },
   },
+  {
+    title: 'System Override',
+    description: 'Bypass the station’s security relay in the transfer corridor to disrupt local patrols. Extract clean to finalize the payment.',
+    reward: 450,
+    deployZone: 'station_chain',
+    unlockAfterCompleted: 1,
+    objective: {
+      kind: 'terminal_hack',
+      requiredHacks: 1,
+    },
+  },
+  {
+    title: 'Deep Ops Intel',
+    description: 'Infiltrate the moonbase deep storage and retrieve the encrypted personnel logs from the secure console. Data is worth more than scrap — extract green.',
+    reward: 850,
+    deployZone: 'station_chain',
+    unlockAfterCompleted: 3,
+    objective: {
+      kind: 'data_retrieval',
+      recoveredId: 'moon_intel_01',
+    },
+  },
 ] as const;
 
 const CONTRACT_DEFINITION_BY_TITLE = new Map(
@@ -137,7 +167,8 @@ function hasObjectiveItem(inv: RaidItem[], itemId: 'survey_drive' | 'beacon_core
 export function contractPayoutEligible(
   active: Pick<{ title: string }, 'title'> | null | undefined,
   inv: RaidItem[],
-  stationKillsSinceDock: number
+  stationKillsSinceDock: number,
+  game?: { terminalsHacked?: number; dataRecoveredIds?: string[] }
 ): boolean {
   const definition = active?.title ? getContractDefinition(active.title) : null;
   if (!definition) return false;
@@ -146,7 +177,16 @@ export function contractPayoutEligible(
     return hasObjectiveItem(inv, definition.objective.itemId);
   }
 
-  return stationKillsSinceDock >= definition.objective.requiredKills;
+  if (definition.objective.kind === 'terminal_hack') {
+    return (game?.terminalsHacked ?? 0) >= definition.objective.requiredHacks;
+  }
+
+  if (definition.objective.kind === 'data_retrieval') {
+    return game?.dataRecoveredIds?.includes(definition.objective.recoveredId) ?? false;
+  }
+
+  // station_kills
+  return stationKillsSinceDock >= (definition.objective as { requiredKills: number }).requiredKills;
 }
 
 /** Returns which deployment zone a contract belongs to. */
@@ -189,7 +229,8 @@ export function getContractRaidHint(title: string, zone: ContractRaidZone): stri
 export function contractProgressSummary(
   title: string,
   inventory: RaidItem[],
-  stationKills: number
+  stationKills: number,
+  game?: { terminalsHacked?: number; dataRecoveredIds?: string[] }
 ): string | null {
   const definition = getContractDefinition(title);
   if (!definition) return null;
@@ -198,6 +239,19 @@ export function contractProgressSummary(
     return hasObjectiveItem(inventory, definition.objective.itemId)
       ? `${definition.objective.itemLabel} in pack — extract to the freighter to cash out.`
       : `Locate and secure the ${definition.objective.itemLabel} before banking via green extract.`;
+  }
+
+  if (definition.objective.kind === 'terminal_hack') {
+    const current = game?.terminalsHacked ?? 0;
+    const required = definition.objective.requiredHacks;
+    return `Terminal hacks: ${current} / ${required}${current >= required ? ' — ready for extraction.' : ''}`;
+  }
+
+  if (definition.objective.kind === 'data_retrieval') {
+    const hasData = game?.dataRecoveredIds?.includes(definition.objective.recoveredId);
+    return hasData
+      ? 'Intel secured in buffer — extract to ship to finalize.'
+      : 'Locate secure console and download intelligence data.';
   }
 
   const requiredKills = definition.objective.requiredKills;

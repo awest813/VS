@@ -9,13 +9,17 @@ import {
   PhysicsAggregate,
   PhysicsShapeType,
   PBRMaterial,
+  Mesh,
+  Sound,
 } from '@babylonjs/core';
 import { Game } from '../Game';
 import { PlayerController } from '../player/PlayerController';
+import { GameState } from '../StateMachine';
 import { placeBabylonModel } from '../loaders/BabylonHostedDecor';
 import { BABYLON_ENV_STUDIO } from '../loaders/BabylonAssetUrls';
 import { applyBabylonIBL } from '../loaders/applyBabylonIBL';
 import { createIndustrialBump, createShipStarfield, makePbrMetalPanel } from '../loaders/IndustrialMaterials';
+import { getContractDeployZone } from '../contracts/contractRules';
 
 /**
  * ShipScene — the player hub aboard the ICV Relentless, a Meridian-class heavy freighter.
@@ -29,6 +33,10 @@ import { createIndustrialBump, createShipStarfield, makePbrMetalPanel } from '..
  */
 export class ShipScene {
   private game: Game;
+  private airlockAlphaMesh: Mesh | null = null;
+  private airlockBetaMesh: Mesh | null = null;
+  private alphaLight: PointLight | null = null;
+  private betaLight: PointLight | null = null;
 
   constructor(game: Game) {
     this.game = game;
@@ -233,9 +241,21 @@ export class ShipScene {
     addBox('armoryWallS',  { width: 12, height: SHIP_H, depth: 1 }, new Vector3(-16, SHIP_H / 2, -34), wallMat);
 
     // Armory contents: stash crates + weapon racks
-    addBox('ArmCrateA', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(-20, 0.5, -26), stashMat, 0);
-    addBox('ArmCrateB', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(-20, 1.5, -26), stashMat, 0);
-    addBox('ArmCrateC', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(-20, 0.5, -29), stashMat, 0);
+    const stashInteract = {
+      hudLabel: 'Open Stash & Loadout',
+      onInteract: () => {
+        window.dispatchEvent(new CustomEvent('toggleShipUI'));
+        document.exitPointerLock();
+      }
+    };
+
+    const cA = addBox('ArmCrateA', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(-20, 0.5, -26), stashMat, 0);
+    const cB = addBox('ArmCrateB', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(-20, 1.5, -26), stashMat, 0);
+    const cC = addBox('ArmCrateC', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(-20, 0.5, -29), stashMat, 0);
+    cA.metadata = stashInteract;
+    cB.metadata = stashInteract;
+    cC.metadata = stashInteract;
+    
     addBox('Weapon Rack', { width: 0.2, height: 4, depth: 4 }, new Vector3(-21.5, 2, -32), accentMat);
 
     // --- Engineering Alcove (starboard aft): x 10 → 22, z -22 → -34 ---
@@ -392,13 +412,41 @@ export class ShipScene {
     const airlockAlpha = MeshBuilder.CreateBox('Airlock Alpha — Station', { width: 6, height: 4, depth: 0.3 }, scene);
     airlockAlpha.position.set(-10, 2, -41.5);
     airlockAlpha.material = airlockAlphaMat;
+    airlockAlpha.metadata = {
+      hudLabel: 'AIRLOCK ALPHA (PORT)',
+      onInteract: () => {
+        const contracts = this.game.contracts;
+        const active = contracts.find(c => c.isActive && !c.isCompleted);
+        const zone = active ? getContractDeployZone(active.title) : null;
+        if (zone === 'station_chain') {
+          this.game.stateMachine.setState(GameState.STATION);
+        } else {
+          window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Airlock Alpha locked — Select a Station/Moon contract first.' } }));
+        }
+      }
+    };
     new PhysicsAggregate(airlockAlpha, PhysicsShapeType.BOX, { mass: 0 }, scene);
+    this.airlockAlphaMesh = airlockAlpha;
 
     // Airlock Beta (starboard — Planet) door
     const airlockBeta = MeshBuilder.CreateBox('Airlock Beta — Planet', { width: 6, height: 4, depth: 0.3 }, scene);
     airlockBeta.position.set(10, 2, -41.5);
     airlockBeta.material = airlockBetaMat;
+    airlockBeta.metadata = {
+      hudLabel: 'AIRLOCK BETA (STARBOARD)',
+      onInteract: () => {
+        const contracts = this.game.contracts;
+        const active = contracts.find(c => c.isActive && !c.isCompleted);
+        const zone = active ? getContractDeployZone(active.title) : null;
+        if (zone === 'planet') {
+          this.game.stateMachine.setState(GameState.PLANET);
+        } else {
+          window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Airlock Beta locked — Select a Planet contract first.' } }));
+        }
+      }
+    };
     new PhysicsAggregate(airlockBeta, PhysicsShapeType.BOX, { mass: 0 }, scene);
+    this.airlockBetaMesh = airlockBeta;
 
     // Airlock divider bulkhead (between alpha and beta)
     addBox('airlockDiv', { width: 1, height: SHIP_H, depth: 8 }, new Vector3(0, SHIP_H / 2, -38), wallMat);
@@ -432,6 +480,13 @@ export class ShipScene {
     };
     opsConsole.metadata = uiMeta;
     screen.metadata = uiMeta;
+
+    // Ambient ship hum — uses the Babylon.js playground sound CDN
+    new Sound('shipHum', 'https://playground.babylonjs.com/sounds/wind.wav', scene, null, {
+      loop: true,
+      autoplay: true,
+      volume: 0.12,
+    });
 
     // ── LIGHTING ───────────────────────────────────────────────────────────────
     // Ambient
@@ -473,12 +528,14 @@ export class ShipScene {
     alphaLight.diffuse = new Color3(1.0, 0.22, 0.22);
     alphaLight.intensity = 0.75;
     alphaLight.range = 12;
+    this.alphaLight = alphaLight;
 
     // Airlock Beta — blue orbital
     const betaLight = new PointLight('betaLight', new Vector3(10, 5.5, -38), scene);
     betaLight.diffuse = new Color3(0.22, 0.55, 1.0);
     betaLight.intensity = 0.75;
     betaLight.range = 12;
+    this.betaLight = betaLight;
 
     // Supply Post — warm golden accent
     const supplyLight = new PointLight('supplyLight', new Vector3(8, 4, -4), scene);
@@ -502,8 +559,31 @@ export class ShipScene {
     const player = new PlayerController(this.game, scene, new Vector3(0, 2, 5));
     this.game.player = player;
 
-    // ── PROPS ──────────────────────────────────────────────────────────────────
-    await Promise.all([
+    // ── NPC POPULATION ────────────────────────────────────────────────────────
+    Promise.all([
+      // Marta — Supply Post
+      placeBabylonModel(scene, 'HVGirl.glb', {
+        position: new Vector3(8.0, 0.05, -5.5),
+        scale: 1.0,
+        rotationY: Math.PI,
+        useMeshesRoot: true
+      }),
+      // Sgt. Hendrix — Quartermaster
+      placeBabylonModel(scene, 'Dude.babylon', {
+        position: new Vector3(-13.0, 0.05, -30.2),
+        scale: 0.05,
+        rotationY: 0,
+        useMeshesRoot: false // Dude.babylon is on models root
+      }),
+      // Crew member in mess hall
+      placeBabylonModel(scene, 'HVGirl.glb', {
+        position: new Vector3(6.0, 0.05, -18.2),
+        scale: 1.0,
+        rotationY: 0,
+        useMeshesRoot: true
+      }),
+
+      // ── PROPS ──────────────────────────────────────────────────────────────────
       // Cargo bay — exploding barrels clustered near pillars
       placeBabylonModel(scene, 'ExplodingBarrel.glb', {
         position: new Vector3(-13.5, 0.38, 3),
@@ -526,7 +606,7 @@ export class ShipScene {
         rotationY: -0.3,
       }),
       // Bridge display globe
-      placeBabylonModel(scene, 'marble.gltf', {
+      placeBabylonModel(scene, 'marble.glb', {
         position: new Vector3(2.4, 1.9, 36.8),
         scale: 0.48,
       }),
@@ -537,7 +617,7 @@ export class ShipScene {
         rotationY: -0.4,
       }),
       // Shader ball in armory (equipment display)
-      placeBabylonModel(scene, 'BabylonShaderBall_Simple.gltf', {
+      placeBabylonModel(scene, 'shaderBall.glb', {
         position: new Vector3(-19.8, 1.18, -31),
         scale: 0.058,
       }),
@@ -564,7 +644,7 @@ export class ShipScene {
         scale: 0.055,
         rotationY: -0.9,
       }),
-      placeBabylonModel(scene, 'BabylonShaderBall_Simple.gltf', {
+      placeBabylonModel(scene, 'shaderBall.glb', {
         position: new Vector3(-13.4, 1.1, -28.1),
         scale: 0.036,
         rotationY: 0.35,
@@ -575,11 +655,53 @@ export class ShipScene {
         scale: 0.03,
         rotationY: Math.PI,
       }),
-      placeBabylonModel(scene, 'marble.gltf', {
+      placeBabylonModel(scene, 'marble.glb', {
         position: new Vector3(5.8, 1.02, -16.0),
         scale: 0.18,
       }),
-    ]);
+    ]).catch(e => console.warn('[ShipScene] Some models failed to load:', e));
+
+    // ── MEDICAL BAY (Starboard, z=30) ──────────────────────────────────────────
+    addBox('MedBayFloor', { width: 8, height: 0.1, depth: 6 }, new Vector3(17, 0.05, 33), floorMat);
+    const medBed = addBox('MedBed', { width: 1.2, height: 0.8, depth: 2.2 }, new Vector3(17, 0.45, 33), tableMat);
+    medBed.metadata = {
+      hudLabel: 'Medical Bed — Bio-Diagnostics',
+      onInteract: () => {
+        window.dispatchEvent(new CustomEvent('toast', { detail: { message: 'Bio-signature nominal. Suit integrity confirmed.' } }));
+      }
+    };
+    const medScreen = MeshBuilder.CreatePlane('MedScreen', { width: 1.2, height: 0.8 }, scene);
+    medScreen.position.set(17, 1.8, 35.8);
+    medScreen.rotation.x = -Math.PI / 10;
+    medScreen.material = screenMat;
+
+    // ── PERSONAL STASH (Aft Corridor) ──────────────────────────────────────────
+    const stashCrate = addBox('Personal Stash', { width: 1.0, height: 1.0, depth: 1.0 }, new Vector3(-12, 0.5, -16), stashMat);
+    stashCrate.metadata = {
+      hudLabel: 'Personal Stash — Secured',
+      onInteract: () => {
+        window.dispatchEvent(new CustomEvent('toggleShipUI'));
+        document.exitPointerLock();
+      }
+    };
+
+    // ── MISSION FEEDBACK LOOP ──────────────────────────────────────────────────
+    scene.onBeforeRenderObservable.add(() => {
+      const active = this.game.contracts.find(c => c.isActive && !c.isCompleted);
+      const zone = active ? getContractDeployZone(active.title) : null;
+      const pulse = 0.4 + Math.sin(Date.now() / 300) * 0.5;
+
+      if (zone === 'station_chain') {
+        if (this.alphaLight) this.alphaLight.intensity = 0.4 + pulse * 1.5;
+        if (this.betaLight) this.betaLight.intensity = 0.25;
+      } else if (zone === 'planet') {
+        if (this.betaLight) this.betaLight.intensity = 0.4 + pulse * 1.5;
+        if (this.alphaLight) this.alphaLight.intensity = 0.25;
+      } else {
+        if (this.alphaLight) this.alphaLight.intensity = 0.75;
+        if (this.betaLight) this.betaLight.intensity = 0.75;
+      }
+    });
 
     return scene;
   }

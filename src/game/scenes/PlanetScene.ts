@@ -11,6 +11,7 @@ import {
   PBRMaterial,
   NoiseProceduralTexture,
 } from '@babylonjs/core';
+import PBRMaterialFactory, { PBREnum } from '../PBRMaterialFactory';
 import { Game } from '../Game';
 import { PlayerController } from '../player/PlayerController';
 import { EnemyAI } from '../ai/EnemyAI';
@@ -67,17 +68,11 @@ export class PlanetScene {
     grimeNoise.persistence = 1.4;
     grimeNoise.animationSpeedFactor = 0;
 
-    const floorMat = new PBRMaterial('planetFloor', scene);
-    floorMat.albedoColor = new Color3(0.28, 0.16, 0.1);
-    floorMat.metallic = 0.25;
-    floorMat.roughness = 0.88;
-    floorMat.bumpTexture = grimeNoise;
-
-    const wallMat = new PBRMaterial('planetWall', scene);
-    wallMat.albedoColor = new Color3(0.32, 0.2, 0.14);
-    wallMat.metallic = 0.5;
-    wallMat.roughness = 0.78;
-    wallMat.bumpTexture = grimeNoise;
+    const pbrFactory = new PBRMaterialFactory(scene);
+    // Alien corroded floor
+    const floorMat = pbrFactory.create(PBREnum.Mushroom_Top_001, { uScale: 12, vScale: 12, pScale: 0.06 });
+    // Corroded metal walls
+    const wallMat = pbrFactory.create(PBREnum.Metal_Plate_15, { uScale: 4, vScale: 2, pScale: 0.04 });
 
     const makeRoom = (name: string, x: number, z: number, w: number, d: number) => {
       const floor = MeshBuilder.CreateBox(`${name}_floor`, { width: w, height: 1, depth: d }, scene);
@@ -169,13 +164,21 @@ export class PlanetScene {
     deepLight.range = 18;
 
     scene.onBeforeRenderObservable.add(() => {
-      const surge = environmentalSurgeActiveAt(Date.now());
+      const now = Date.now();
+      const surge = environmentalSurgeActiveAt(now);
       this.game.raidEnvironmentalSurge = surge;
-      ambient.intensity = ambientBase * (surge ? 0.35 : 1);
-      entryLight.intensity = entryLightBase * (surge ? 0.4 : 1);
-      hubLight.intensity = hubLightBase * (surge ? 0.4 : 1);
-      westLight.intensity = westLightBase * (surge ? 0.42 : 1);
-      deepLight.intensity = deepLightBase * (surge ? 0.48 : 1);
+      
+      let intensityMul = 1;
+      if (surge) {
+        const flicker = Math.sin(now / 30) * Math.cos(now / 60);
+        intensityMul = flicker > 0.4 ? 0.4 : flicker > -0.1 ? 0.08 : 0.005;
+      }
+
+      ambient.intensity = ambientBase * intensityMul;
+      entryLight.intensity = entryLightBase * (surge ? intensityMul * 0.5 : 1);
+      hubLight.intensity = hubLightBase * (surge ? intensityMul * 0.5 : 1);
+      westLight.intensity = westLightBase * (surge ? intensityMul * 0.6 : 1);
+      deepLight.intensity = deepLightBase * (surge ? intensityMul * 0.7 : 1);
     });
 
     // --- Lore terminal ---
@@ -290,7 +293,8 @@ export class PlanetScene {
         const inventory = mergeAmmoForShipExtract(
           [...this.game.player.inventory],
           weapon?.currentAmmo ?? 0,
-          weapon?.reserveAmmo ?? 0
+          weapon?.reserveAmmo ?? 0,
+          weapon?.weaponArchetype.ammoItemId
         );
 
         void (async () => {
@@ -298,6 +302,7 @@ export class PlanetScene {
             const result = await persistStationRaidExtract({
               inventory,
               stationKillsSinceDock: this.game.enemiesKilledStation,
+              game: this.game,
             });
             console.log('Planet extract: inventory saved.');
             window.dispatchEvent(
@@ -320,7 +325,7 @@ export class PlanetScene {
     });
 
     // --- Decorative props ---
-    await Promise.all([
+    Promise.all([
       placeBabylonModel(scene, 'ExplodingBarrel.glb', {
         position: new Vector3(-2.8, 0.38, -11.5),
         scale: 0.4,
@@ -331,7 +336,7 @@ export class PlanetScene {
         scale: 0.38,
         rotationY: -0.6,
       }),
-      placeBabylonModel(scene, 'marble.gltf', {
+      placeBabylonModel(scene, 'marble.glb', {
         position: new Vector3(2.2, 1.85, -11.5),
         scale: 0.48,
       }),

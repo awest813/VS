@@ -1,4 +1,5 @@
 import { Scene, Vector3, PointLight, MeshBuilder, Color4, HemisphericLight, PhysicsAggregate, PhysicsShapeType, Color3, PBRMaterial, NoiseProceduralTexture } from '@babylonjs/core';
+import PBRMaterialFactory, { PBREnum } from '../PBRMaterialFactory';
 import { Game } from '../Game';
 import { PlayerController } from '../player/PlayerController';
 import { EnemyAI } from '../ai/EnemyAI';
@@ -52,17 +53,9 @@ export class MoonBaseScene {
     grimeNoise.persistence = 1.5;
     grimeNoise.animationSpeedFactor = 0; // Static grime
 
-    const floorMat = new PBRMaterial("floorMat", scene);
-    floorMat.albedoColor = new Color3(0.15, 0.15, 0.15);
-    floorMat.metallic = 0.3;
-    floorMat.roughness = 0.8;
-    floorMat.bumpTexture = grimeNoise;
-
-    const wallMat = new PBRMaterial("wallMat", scene);
-    wallMat.albedoColor = new Color3(0.2, 0.22, 0.2);
-    wallMat.metallic = 0.6;
-    wallMat.roughness = 0.7;
-    wallMat.bumpTexture = grimeNoise;
+    const pbrFactory = new PBRMaterialFactory(scene);
+    const floorMat = pbrFactory.create(PBREnum.Metal_Plate_15, { uScale: 8, vScale: 8, pScale: 0.04 });
+    const wallMat = pbrFactory.create(PBREnum.Metal_Plate_41, { uScale: 4, vScale: 2, pScale: 0.02 });
 
     // Helper to create a room
     const createRoom = (name: string, x: number, z: number, width: number, depth: number) => {
@@ -148,12 +141,20 @@ export class MoonBaseScene {
     northLight.diffuse = new Color3(1, 0, 0); // Danger/Red
 
     scene.onBeforeRenderObservable.add(() => {
-      const surge = environmentalSurgeActiveAt(Date.now());
+      const now = Date.now();
+      const surge = environmentalSurgeActiveAt(now);
       this.game.raidEnvironmentalSurge = surge;
-      ambient.intensity = moonAmbientBase * (surge ? 0.4 : 1);
-      hubLight.intensity = hubLightBase * (surge ? 0.38 : 1);
-      westLight.intensity = westLightBase * (surge ? 0.42 : 1);
-      northLight.intensity = northLightBase * (surge ? 0.45 : 1);
+      
+      let intensityMul = 1;
+      if (surge) {
+        const flicker = Math.sin(now / 50) * Math.cos(now / 80);
+        intensityMul = flicker > 0.3 ? 0.35 : flicker > -0.2 ? 0.12 : 0.01;
+      }
+
+      ambient.intensity = moonAmbientBase * intensityMul;
+      hubLight.intensity = hubLightBase * (surge ? intensityMul * 0.6 : 1);
+      westLight.intensity = westLightBase * (surge ? intensityMul * 0.7 : 1);
+      northLight.intensity = northLightBase * (surge ? intensityMul * 0.8 : 1);
     });
 
     // --- Loot Spawns ---
@@ -206,19 +207,23 @@ export class MoonBaseScene {
       spawnCrate(cdef.meshId, cdef.x, cdef.z, !!cdef.objective);
     }
 
-    const netTerminal = MeshBuilder.CreateBox('MoonNetTerminal', { width: 1.4, height: 1.5, depth: 0.4 }, scene);
-    netTerminal.position.set(2.1, 1.2, -14);
-    netTerminal.material = wallMat;
-    netTerminal.metadata = {
-      hudLabel: 'Locker net terminal',
+    const dataConsole = MeshBuilder.CreateBox('MoonDataConsole', { width: 1.6, height: 1.2, depth: 0.6 }, scene);
+    dataConsole.position.set(-2, 1, 45); // North Room
+    const consoleMat = new PBRMaterial('consoleMat', scene);
+    consoleMat.albedoColor = new Color3(0.12, 0.12, 0.12);
+    consoleMat.emissiveColor = new Color3(0.4, 0.1, 0.05); // Red glow
+    dataConsole.material = consoleMat;
+    dataConsole.metadata = {
+      hudLabel: 'Secure data console',
       onInteract: () => {
-        window.dispatchEvent(
-          new CustomEvent('raidLorePing', { detail: { segmentId: 'moon_deep_storage' } })
-        );
-      },
+        if (!this.game.dataRecoveredIds.includes('moon_intel_01')) {
+          this.game.dataRecoveredIds.push('moon_intel_01');
+          window.dispatchEvent(new CustomEvent('raidLorePing', { detail: { segmentId: 'intel_downloaded' } }));
+        }
+      }
     };
 
-    await Promise.all([
+    Promise.all([
       placeBabylonModel(scene, 'ExplodingBarrel.glb', {
         position: new Vector3(-20.5, 0.38, 19.25),
         scale: 0.42,
@@ -228,7 +233,7 @@ export class MoonBaseScene {
         position: new Vector3(23.75, 0.38, 18.85),
         scale: 0.4,
       }),
-      placeBabylonModel(scene, 'marble.gltf', {
+      placeBabylonModel(scene, 'marble.glb', {
         position: new Vector3(3.2, 1.85, -14.75),
         scale: 0.55,
       }),
@@ -236,7 +241,7 @@ export class MoonBaseScene {
         position: new Vector3(26.85, 1.35, 20.95),
         scale: 0.35,
       }),
-      placeBabylonModel(scene, 'BabylonShaderBall_Simple.gltf', {
+      placeBabylonModel(scene, 'shaderBall.glb', {
         position: new Vector3(-24.85, 0.85, 20.95),
         scale: 0.06,
       }),

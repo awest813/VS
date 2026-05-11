@@ -1,4 +1,5 @@
 import type { WeaponLootMods } from '../weapons/weaponDefinitions';
+import { getSuitArchetype, type SuitClassId } from '../player/suitDefinitions';
 
 export interface PersistentUpgradeState {
   weaponDamageTier: number;
@@ -94,16 +95,29 @@ export function normalizeUpgradeState(
   };
 }
 
-export function applyArmorUpgradeBonuses(state: PersistentUpgradeState): {
+export function applyArmorUpgradeBonuses(
+  state: PersistentUpgradeState,
+  suitClassId: SuitClassId = 'pathfinder'
+): {
   maxHealth: number;
   maxStamina: number;
   maxBattery: number;
+  speedMultiplier: number;
+  jumpMultiplier: number;
+  staminaRegenMultiplier: number;
+  batteryRechargeMultiplier: number;
 } {
   const upgrades = normalizeUpgradeState(state);
+  const suit = getSuitArchetype(suitClassId);
+
   return {
-    maxHealth: 100 + upgrades.armorPlatingTier * 25,
-    maxStamina: 100 + upgrades.servoAssistTier * 15,
-    maxBattery: 100 + upgrades.batteryPackTier * 25,
+    maxHealth: suit.baseHealth + upgrades.armorPlatingTier * 25,
+    maxStamina: suit.baseStamina + upgrades.servoAssistTier * 15,
+    maxBattery: suit.baseBattery + upgrades.batteryPackTier * 25,
+    speedMultiplier: suit.speedMultiplier,
+    jumpMultiplier: suit.jumpMultiplier,
+    staminaRegenMultiplier: suit.staminaRegenMultiplier,
+    batteryRechargeMultiplier: suit.batteryRechargeMultiplier,
   };
 }
 

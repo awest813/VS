@@ -20,11 +20,22 @@ export class WeaponController {
 
   public currentAmmo: number = 30;
   public maxAmmo: number = 30;
-  public reserveAmmo: number = 0;
+  
+  public get reserveAmmo(): number {
+    const ammoId = this.archetype.ammoItemId;
+    return this.game.raidInventory
+      .filter(i => i.itemId === ammoId)
+      .reduce((sum, i) => sum + i.quantity, 0);
+  }
+
   public isReloading: boolean = false;
 
   /** Stash/loadout weapon id (`rifle_01`, …) */
   public readonly weaponItemId: string;
+
+  public get weaponArchetype(): WeaponArchetype {
+    return this.archetype;
+  }
 
   private fireRate: number = 150;
   private lastFireTime: number = 0;
@@ -41,6 +52,7 @@ export class WeaponController {
   private recoilHeat = 0;
   private triggerHeld = false;
   private triggerConsumedForSemi = false;
+  private chargeHeat = 0;
 
   private weaponMesh: Mesh | null = null;
   private fireSound: Sound | null = null;
@@ -173,6 +185,7 @@ export class WeaponController {
 
   private startFiring() {
     if (this.game.stateMachine.getState() === GameState.SHIP) return;
+    if (this.weaponItemId === 'thermal_lance') return; // Handled in updateFiring charge logic
     if (this.fireMode === 'semi' && this.triggerConsumedForSemi) return;
     const now = Date.now();
     if (now - this.lastFireTime >= this.fireRate && this.currentAmmo > 0 && !this.isReloading) {
@@ -188,9 +201,22 @@ export class WeaponController {
     if (!this.scene.getEngine().isPointerLock) {
       this.triggerHeld = false;
       this.triggerConsumedForSemi = false;
+      this.chargeHeat = 0;
       return;
     }
-    if (this.triggerHeld && this.fireMode === 'auto') {
+
+    if (this.weaponItemId === 'thermal_lance') {
+      if (this.triggerHeld && this.currentAmmo > 0 && !this.isReloading) {
+        this.chargeHeat = Math.min(1.0, this.chargeHeat + (this.scene.getEngine().getDeltaTime() / 1500)); // 1.5s charge
+        if (this.chargeHeat >= 1.0) {
+          this.fire();
+          this.chargeHeat = 0;
+          this.triggerConsumedForSemi = true;
+        }
+      } else {
+        this.chargeHeat = Math.max(0, this.chargeHeat - (this.scene.getEngine().getDeltaTime() / 500));
+      }
+    } else if (this.triggerHeld && this.fireMode === 'auto') {
       this.startFiring();
     }
   }
@@ -321,9 +347,24 @@ export class WeaponController {
         );
         this.reloadChamberSound.play();
       }
-      const { newMag, newReserve } = computeReloadTransfer(this.currentAmmo, this.maxAmmo, this.reserveAmmo);
-      this.currentAmmo = newMag;
-      this.reserveAmmo = newReserve;
+      
+      const needed = this.maxAmmo - this.currentAmmo;
+      const ammoId = this.archetype.ammoItemId;
+      let toFill = 0;
+
+      // Consume from inventory
+      const inv = this.game.raidInventory;
+      for (let i = inv.length - 1; i >= 0; i--) {
+        if (inv[i].itemId === ammoId) {
+          const take = Math.min(needed - toFill, inv[i].quantity);
+          inv[i].quantity -= take;
+          toFill += take;
+          if (inv[i].quantity <= 0) inv.splice(i, 1);
+        }
+        if (toFill >= needed) break;
+      }
+
+      this.currentAmmo += toFill;
       this.isReloading = false;
       this.reloadTimer = null;
     }, this.reloadDurationMs);

@@ -73,6 +73,8 @@ export class EnemyAI {
   private modelRoot: import("@babylonjs/core").AbstractMesh | null = null;
   private animGroups: AnimationGroup[] = [];
   private currentAnim: string = "";
+  private investigatingFlare: PointLight | null = null;
+  private stunnedUntilAt = 0;
 
   /** Timers + observers we own — cleared on scene dispose so cross-scene damage / model loads can't leak into a fresh raid or ship hub. */
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -225,12 +227,39 @@ export class EnemyAI {
       home: this.toMovementPoint(this.spawnPosition),
       enemy: this.toMovementPoint(enemyPos),
       player: this.toMovementPoint(playerPos),
-      playerDetected: distToPlayer < chaseAggro,
+      playerDetected: distToPlayer < chaseAggro && this.stunnedUntilAt < now,
       playerDistance: distToPlayer,
       attackRange: this.attackRange,
       profile: this.movementProfile,
       memory: this.movementMemory,
     });
+    
+    // Gadget Reactivity: Flare Investigation
+    if (distToPlayer >= chaseAggro && this.stunnedUntilAt < now) {
+      const flares = this.scene.lights.filter((l: any) => l.name === "flareLight") as PointLight[];
+      let nearestFlare: PointLight | null = null;
+      let minDist = 15; // Aggro range for flare
+
+      for (const f of flares) {
+        const d = Vector3.Distance(enemyPos, f.position);
+        if (d < minDist) {
+          minDist = d;
+          nearestFlare = f;
+        }
+      }
+
+      if (nearestFlare) {
+        this.investigatingFlare = nearestFlare;
+        // Override destination to flare
+        movementPlan.destination = this.toMovementPoint(nearestFlare.position);
+        movementPlan.mode = 'investigate';
+      } else {
+        this.investigatingFlare = null;
+      }
+    } else {
+      this.investigatingFlare = null;
+    }
+
     this.movementMemory = movementPlan.nextMemory;
 
     if (distToPlayer < chaseAggro) {

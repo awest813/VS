@@ -3,14 +3,59 @@
  * persistence flow, and WeaponController runtime.
  */
 
-export type PrimaryWeaponItemId = 'rifle_01' | 'shotgun_01' | 'pulse_rifle' | 'carbine_mk2';
+export type PrimaryWeaponItemId =
+  | 'rifle_01'
+  | 'shotgun_01'
+  | 'pulse_rifle'
+  | 'carbine_mk2'
+  | 'thermal_lance'
+  | 'void_disruptor'
+  | 'smg_flechette'
+  | 'slug_cannon'
+  | 'pistol_std'
+  | 'revolver_454'
+  | 'pulse_compact';
 
 export const PRIMARY_WEAPON_ITEM_IDS: readonly PrimaryWeaponItemId[] = [
   'rifle_01',
   'shotgun_01',
   'pulse_rifle',
   'carbine_mk2',
+  'thermal_lance',
+  'void_disruptor',
+  'smg_flechette',
+  'slug_cannon',
+  'pistol_std',
+  'revolver_454',
+  'pulse_compact',
 ] as const;
+
+export type AmmoItemId =
+  | 'ammo_9mm'
+  | 'ammo_556'
+  | 'ammo_762_ap'
+  | 'ammo_12g'
+  | 'ammo_20g_slug'
+  | 'pulse_cell'
+  | 'thermal_cell'
+  | 'void_charge'
+  | 'ammo_454_mag';
+
+export const AMMO_ITEM_IDS: readonly AmmoItemId[] = [
+  'ammo_9mm',
+  'ammo_556',
+  'ammo_762_ap',
+  'ammo_12g',
+  'ammo_20g_slug',
+  'pulse_cell',
+  'thermal_cell',
+  'void_charge',
+  'ammo_454_mag',
+] as const;
+
+export function isAmmoItemId(id: string): id is AmmoItemId {
+  return (AMMO_ITEM_IDS as readonly string[]).includes(id);
+}
 
 export function isPrimaryWeaponItemId(id: string): id is PrimaryWeaponItemId {
   return (PRIMARY_WEAPON_ITEM_IDS as readonly string[]).includes(id);
@@ -37,6 +82,7 @@ export interface WeaponArchetype {
   /** Per-pellet spread factor added to normalized ray components before normalize() */
   spread: number;
   hitscanRange: number;
+  ammoItemId: AmmoItemId;
   /** Camera-local placeholder mesh (first-person box weapon). */
   viewportMesh: { width: number; height: number; depth: number };
   /** Albedo tint RGB 0–1 */
@@ -64,6 +110,7 @@ const RIFLE: WeaponArchetype = {
   pelletCount: 1,
   spread: 0.012,
   hitscanRange: 90,
+  ammoItemId: 'ammo_556',
   viewportMesh: { width: 0.085, height: 0.095, depth: 0.52 },
   viewportTintRgb: [0.12, 0.12, 0.14],
   viewportEmissiveRgb: [0.04, 0.09, 0.12],
@@ -85,6 +132,7 @@ const SHOTGUN: WeaponArchetype = {
   pelletCount: 6,
   spread: 0.12,
   hitscanRange: 36,
+  ammoItemId: 'ammo_12g',
   viewportMesh: { width: 0.125, height: 0.12, depth: 0.4 },
   viewportTintRgb: [0.14, 0.1, 0.07],
   viewportEmissiveRgb: [0.06, 0.04, 0.02],
@@ -106,6 +154,7 @@ const PULSE: WeaponArchetype = {
   pelletCount: 1,
   spread: 0.018,
   hitscanRange: 76,
+  ammoItemId: 'pulse_cell',
   viewportMesh: { width: 0.09, height: 0.085, depth: 0.46 },
   viewportTintRgb: [0.08, 0.14, 0.16],
   viewportEmissiveRgb: [0.02, 0.22, 0.28],
@@ -127,6 +176,7 @@ const CARBINE: WeaponArchetype = {
   pelletCount: 1,
   spread: 0.006,
   hitscanRange: 120,
+  ammoItemId: 'ammo_762_ap',
   viewportMesh: { width: 0.09, height: 0.088, depth: 0.5 },
   viewportTintRgb: [0.14, 0.13, 0.1],
   viewportEmissiveRgb: [0.05, 0.06, 0.08],
@@ -136,11 +186,172 @@ const CARBINE: WeaponArchetype = {
   farDamageMultiplier: 0.74,
 };
 
+const THERMAL_LANCE: WeaponArchetype = {
+  itemId: 'thermal_lance',
+  displayName: 'Thermal lance',
+  roleLabel: 'ANTI-ARMOR · CHARGE',
+  magazineSize: 4,
+  fireMode: 'semi', // Charge logic handled in controller
+  fireRateMs: 2400,
+  hitscanDamage: 240,
+  reloadDurationMs: 3000,
+  pelletCount: 1,
+  spread: 0.002,
+  hitscanRange: 50,
+  ammoItemId: 'thermal_cell',
+  viewportMesh: { width: 0.1, height: 0.1, depth: 0.6 },
+  viewportTintRgb: [0.2, 0.1, 0.05],
+  viewportEmissiveRgb: [0.4, 0.2, 0.0],
+  recoilScale: 2.5,
+  optimalRangeMeters: 40,
+  closeDamageMultiplier: 1.0,
+  farDamageMultiplier: 0.8,
+};
+
+const VOID_DISRUPTOR: WeaponArchetype = {
+  itemId: 'void_disruptor',
+  displayName: 'Void disruptor',
+  roleLabel: 'ANOMALY · BURST',
+  magazineSize: 18,
+  fireMode: 'semi',
+  fireRateMs: 600,
+  hitscanDamage: 22,
+  reloadDurationMs: 2500,
+  pelletCount: 3,
+  spread: 0.05,
+  hitscanRange: 40,
+  ammoItemId: 'void_charge',
+  viewportMesh: { width: 0.11, height: 0.11, depth: 0.45 },
+  viewportTintRgb: [0.1, 0.05, 0.15],
+  viewportEmissiveRgb: [0.25, 0.1, 0.45],
+  recoilScale: 1.2,
+  optimalRangeMeters: 20,
+  closeDamageMultiplier: 1.2,
+  farDamageMultiplier: 0.5,
+};
+
+const SMG_FLECHETTE: WeaponArchetype = {
+  itemId: 'smg_flechette',
+  displayName: 'Flechette SMG',
+  roleLabel: 'FAST ADS · CLEAR',
+  magazineSize: 40,
+  fireMode: 'auto',
+  fireRateMs: 100,
+  hitscanDamage: 18,
+  reloadDurationMs: 1400,
+  pelletCount: 1,
+  spread: 0.025,
+  hitscanRange: 30,
+  ammoItemId: 'ammo_9mm',
+  viewportMesh: { width: 0.07, height: 0.08, depth: 0.35 },
+  viewportTintRgb: [0.1, 0.1, 0.12],
+  viewportEmissiveRgb: [0.05, 0.05, 0.06],
+  recoilScale: 0.6,
+  optimalRangeMeters: 12,
+  closeDamageMultiplier: 1.15,
+  farDamageMultiplier: 0.3,
+};
+
+const SLUG_CANNON: WeaponArchetype = {
+  itemId: 'slug_cannon',
+  displayName: 'Slug cannon',
+  roleLabel: 'STAGGER · LOUD',
+  magazineSize: 5,
+  fireMode: 'semi',
+  fireRateMs: 1200,
+  hitscanDamage: 90,
+  reloadDurationMs: 3500,
+  pelletCount: 1,
+  spread: 0.008,
+  hitscanRange: 60,
+  ammoItemId: 'ammo_20g_slug',
+  viewportMesh: { width: 0.14, height: 0.15, depth: 0.55 },
+  viewportTintRgb: [0.15, 0.15, 0.15],
+  viewportEmissiveRgb: [0.1, 0.1, 0.1],
+  recoilScale: 3.2,
+  optimalRangeMeters: 25,
+  closeDamageMultiplier: 1.25,
+  farDamageMultiplier: 0.45,
+};
+
+const PISTOL_STD: WeaponArchetype = {
+  itemId: 'pistol_std',
+  displayName: 'Station pistol',
+  roleLabel: 'EMERGENCY · BACKUP',
+  magazineSize: 12,
+  fireMode: 'semi',
+  fireRateMs: 350,
+  hitscanDamage: 20,
+  reloadDurationMs: 1200,
+  pelletCount: 1,
+  spread: 0.015,
+  hitscanRange: 45,
+  ammoItemId: 'ammo_9mm',
+  viewportMesh: { width: 0.05, height: 0.07, depth: 0.22 },
+  viewportTintRgb: [0.12, 0.12, 0.14],
+  viewportEmissiveRgb: [0.02, 0.03, 0.04],
+  recoilScale: 0.8,
+  optimalRangeMeters: 15,
+  closeDamageMultiplier: 1.1,
+  farDamageMultiplier: 0.5,
+};
+
+const REVOLVER_454: WeaponArchetype = {
+  itemId: 'revolver_454',
+  displayName: 'Heavy revolver',
+  roleLabel: 'HIGH DAMAGE · STAGGER',
+  magazineSize: 6,
+  fireMode: 'semi',
+  fireRateMs: 500,
+  hitscanDamage: 55,
+  reloadDurationMs: 2800,
+  pelletCount: 1,
+  spread: 0.01,
+  hitscanRange: 55,
+  ammoItemId: 'ammo_454_mag',
+  viewportMesh: { width: 0.06, height: 0.08, depth: 0.28 },
+  viewportTintRgb: [0.18, 0.16, 0.14],
+  viewportEmissiveRgb: [0.08, 0.04, 0.02],
+  recoilScale: 2.2,
+  optimalRangeMeters: 20,
+  closeDamageMultiplier: 1.2,
+  farDamageMultiplier: 0.6,
+};
+
+const PULSE_COMPACT: WeaponArchetype = {
+  itemId: 'pulse_compact',
+  displayName: 'Compact pulse',
+  roleLabel: 'LIGHTWEIGHT · ANOMALY',
+  magazineSize: 20,
+  fireMode: 'semi',
+  fireRateMs: 300,
+  hitscanDamage: 16,
+  reloadDurationMs: 1500,
+  pelletCount: 1,
+  spread: 0.02,
+  hitscanRange: 50,
+  ammoItemId: 'pulse_cell',
+  viewportMesh: { width: 0.055, height: 0.075, depth: 0.25 },
+  viewportTintRgb: [0.06, 0.12, 0.14],
+  viewportEmissiveRgb: [0.01, 0.18, 0.22],
+  recoilScale: 0.7,
+  optimalRangeMeters: 15,
+  closeDamageMultiplier: 1.1,
+  farDamageMultiplier: 0.6,
+};
+
 export const WEAPON_ARCHETYPES: Record<PrimaryWeaponItemId, WeaponArchetype> = {
   rifle_01: RIFLE,
   shotgun_01: SHOTGUN,
   pulse_rifle: PULSE,
   carbine_mk2: CARBINE,
+  thermal_lance: THERMAL_LANCE,
+  void_disruptor: VOID_DISRUPTOR,
+  smg_flechette: SMG_FLECHETTE,
+  slug_cannon: SLUG_CANNON,
+  pistol_std: PISTOL_STD,
+  revolver_454: REVOLVER_454,
+  pulse_compact: PULSE_COMPACT,
 };
 
 const MIN_HITSCAN_DAMAGE = 1;
@@ -154,6 +365,11 @@ export const ARMORY_PRIMARY_OFFERS: readonly { itemId: PrimaryWeaponItemId; cred
   { itemId: 'shotgun_01', credits: 110 },
   { itemId: 'carbine_mk2', credits: 150 },
   { itemId: 'pulse_rifle', credits: 210 },
+  { itemId: 'smg_flechette', credits: 180 },
+  { itemId: 'revolver_454', credits: 140 },
+  { itemId: 'thermal_lance', credits: 450 },
+  { itemId: 'void_disruptor', credits: 380 },
+  { itemId: 'slug_cannon', credits: 320 },
 ];
 
 export function getWeaponArchetype(itemId: string): WeaponArchetype {

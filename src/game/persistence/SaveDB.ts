@@ -14,6 +14,7 @@ export interface PlayerProfile {
   armorPlatingTier: number;
   servoAssistTier: number;
   batteryPackTier: number;
+  suitClass: 'pathfinder' | 'bulwark' | 'tech_specialist';
 }
 
 export interface StashItem {
@@ -57,12 +58,16 @@ export class SaveDB extends Dexie {
         reputation: 0,
         health: 100,
         ...DEFAULT_UPGRADE_STATE,
+        suitClass: 'pathfinder',
       });
     } else {
       const profiles = await this.playerProfile.toArray();
       for (const profile of profiles) {
         if (profile.id === undefined) continue;
         const normalized = normalizeUpgradeState(profile);
+        if (profile.suitClass === undefined) {
+          (normalized as any).suitClass = 'pathfinder';
+        }
         await this.playerProfile.update(profile.id, normalized);
       }
     }
@@ -102,19 +107,8 @@ export class SaveDB extends Dexie {
       }
     }
 
-    const afterSeed = await this.contracts.toArray();
-    const hasActiveOpen = afterSeed.some((c) => c.isActive && !c.isCompleted);
-    if (!hasActiveOpen) {
-      const firstOpen = afterSeed.find((c) => !c.isCompleted);
-      if (firstOpen?.id !== undefined) {
-        for (const active of afterSeed) {
-          if (active.isActive && active.id !== undefined) {
-            await this.contracts.update(active.id, { isActive: false });
-          }
-        }
-        await this.contracts.update(firstOpen.id, { isActive: true });
-      }
-    }
+    // No longer auto-enforcing an active contract here.
+    // The player will select their mission from the Notice Board or Bridge Console.
   }
 }
 

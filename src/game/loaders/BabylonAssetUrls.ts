@@ -11,3 +11,4 @@ export const BABYLON_ENV_STUDIO = `${BABYLON_ASSETS}environments/studio.env`;
 export const BABYLON_ENV_SPECULAR = `${BABYLON_ASSETS}environments/environmentSpecular.env`;
 
 export const BABYLON_MODELS = 'https://models.babylonjs.com/';
+export const BABYLON_MESHES = 'https://assets.babylonjs.com/meshes/';

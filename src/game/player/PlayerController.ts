@@ -1,10 +1,11 @@
-import { Scene, Vector3, Mesh, MeshBuilder, FreeCamera, PhysicsAggregate, PhysicsShapeType, Quaternion, Ray, PhysicsMotionType, PointLight, Sound } from '@babylonjs/core';
+import { Scene, Vector3, Mesh, MeshBuilder, FreeCamera, PhysicsAggregate, PhysicsShapeType, Quaternion, Ray, PhysicsMotionType, PointLight, Sound, Color3, StandardMaterial, HighlightLayer } from '@babylonjs/core';
 import { Game } from '../Game';
 import { WeaponController } from './WeaponController';
+import { GADGET_ARCHETYPES, getGadgetArchetype, type GadgetItemId } from '../gadgets/gadgetDefinitions';
 import { db } from '../persistence/SaveDB';
 import { GameState } from '../StateMachine';
 import { isInteractableTarget, resolveInteractableTarget } from '../hub/interactionRay';
-import { isPrimaryWeaponItemId } from '../weapons/weaponDefinitions';
+import { isPrimaryWeaponItemId, isAmmoItemId } from '../weapons/weaponDefinitions';
 import { doom3HandLight, flashlightOutputIntensity } from '../level/idTech4Inspired';
 import { applyArmorUpgradeBonuses, combineWeaponUpgradeMods, normalizeUpgradeState } from '../progression/profileProgression';
 import {
@@ -12,6 +13,7 @@ import {
   RAID_GADGET_SLOW_DURATION_MS,
 } from '../raid/raidGadget';
 import { AudioMix, BabylonPlaygroundSound } from '../audio/babylonPlaygroundSounds';
+import { SensorSweepEffect } from '../gadgets/SensorSweepEffect';
 
 /** Shared with HUD cooldown bar — keep one source of truth. */
 export const RAID_MEDKIT_COOLDOWN_MS = 9000;
@@ -40,12 +42,20 @@ export class PlayerController {
   public battery: number = 100;
   public maxBattery: number = 100;
   public flashlightOn: boolean = true;
+  private batteryWarningPlayed = false;
 
   // Stamina
   public stamina: number = 100;
   public maxStamina: number = 100;
   /** True while stamina is recovering from a depleted state (requires hitting recharge threshold). */
-  private staminaDepleted = false;
+  private staminaDepleted: boolean = false;
+  
+  // Suit Multipliers
+  private suitSpeedMultiplier: number = 1.0;
+  private suitJumpMultiplier: number = 1.0;
+  private suitStaminaRegenMultiplier: number = 1.0;
+  private suitBatteryRechargeMultiplier: number = 1.0;
+  public suitClass: string = 'pathfinder';
   private bandageReadyAtMs = 0;
 
   // Audio
@@ -145,12 +155,10 @@ export class PlayerController {
     const staging = !this.game.loadoutStagingApplied;
     if (staging) {
       for (const item of loadoutItems) {
-        if (item.itemId === 'ammo_9mm') {
+        if (isAmmoItemId(item.itemId)) {
           continue;
         }
-        if (item.itemId === 'medkit' || item.itemId === 'bandage') {
-          this.inventory.push({ itemId: item.itemId, quantity: item.quantity });
-        } else if (isPrimaryWeaponItemId(item.itemId)) {
+        if (isPrimaryWeaponItemId(item.itemId)) {
           equippedWeapon = item.itemId;
           equippedStats = item.stats || null;
         }
@@ -166,13 +174,20 @@ export class PlayerController {
       }
     }
 
-    const armorStats = applyArmorUpgradeBonuses(upgradeState);
+    const sClass = profile?.suitClass ?? 'pathfinder';
+    const armorStats = applyArmorUpgradeBonuses(upgradeState, sClass);
+    this.suitClass = sClass;
     this.maxHealth = armorStats.maxHealth;
     this.health = armorStats.maxHealth;
     this.maxStamina = armorStats.maxStamina;
     this.stamina = armorStats.maxStamina;
     this.maxBattery = armorStats.maxBattery;
     this.battery = armorStats.maxBattery;
+
+    this.suitSpeedMultiplier = armorStats.speedMultiplier;
+    this.suitJumpMultiplier = armorStats.jumpMultiplier;
+    this.suitStaminaRegenMultiplier = armorStats.staminaRegenMultiplier;
+    this.suitBatteryRechargeMultiplier = armorStats.batteryRechargeMultiplier;
 
     this.weapon = new WeaponController(
       this.game,
@@ -184,8 +199,8 @@ export class PlayerController {
 
     if (staging) {
       for (const item of loadoutItems) {
-        if (item.itemId === 'ammo_9mm') {
-          this.weapon.reserveAmmo += item.quantity;
+        if (isAmmoItemId(item.itemId) || item.itemId === 'medkit' || item.itemId === 'bandage' || GADGET_ARCHETYPES[item.itemId as GadgetItemId]) {
+          this.game.raidInventory.push({ itemId: item.itemId, quantity: item.quantity });
         }
       }
     }
@@ -205,7 +220,8 @@ export class PlayerController {
         shipHub: this.game.stateMachine.getState() === GameState.SHIP,
       });
       this.weapon.currentAmmo = Math.max(0, Math.min(preserved.currentAmmo, this.weapon.maxAmmo));
-      this.weapon.reserveAmmo = Math.max(0, preserved.reserveAmmo);
+      // reserveAmmo is a getter now, so we don't set it directly. 
+      // It is derived from the game's raidInventory which is preserved elsewhere.
       this.game.preservedPlayerState = null;
     }
   }
@@ -290,15 +306,51 @@ export class PlayerController {
 
   private tryDeployRaidGadget() {
     const st = this.game.stateMachine.getState();
-    if (st !== GameState.STATION && st !== GameState.MOON_BASE) return;
+    if (st !== GameState.STATION && st !== GameState.MOON_BASE && st !== GameState.PLANET) return;
     if (Date.now() < this.game.raidGadgetReadyAtMs) return;
+
+    const inv = this.game.raidInventory;
+    const gadgetIdx = inv.findIndex(i => GADGET_ARCHETYPES[i.itemId as GadgetItemId] !== undefined);
+    if (gadgetIdx < 0) return;
+
+    const item = inv[gadgetIdx];
+    const arch = getGadgetArchetype(item.itemId)!;
+    
     const now = Date.now();
-    this.game.raidGadgetSlowUntil = now + RAID_GADGET_SLOW_DURATION_MS;
-    this.game.raidGadgetReadyAtMs = now + RAID_GADGET_COOLDOWN_MS;
+    this.game.raidGadgetReadyAtMs = now + arch.cooldownMs;
+    
+    // Consume 1 gadget
+    item.quantity--;
+    if (item.quantity <= 0) inv.splice(gadgetIdx, 1);
+
     this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeGadget);
     this.uiBlipSound.setPlaybackRate(AudioMix.uiBlipRateGadget);
     this.uiBlipSound.play();
-    window.dispatchEvent(new CustomEvent('raidGadgetDeployed'));
+
+    // Effect Dispatch
+    if (arch.id === 'flare_chem') {
+      const light = new PointLight("flareLight", this.mesh.position.clone(), this.scene);
+      light.diffuse = new Color3(1, 0.9, 0.7);
+      light.intensity = 1.8;
+      light.range = 35;
+      setTimeout(() => light.dispose(), arch.durationMs);
+    } else if (arch.id === 'shield_deploy') {
+      const shield = MeshBuilder.CreateBox("portableShield", { width: 3, height: 2, depth: 0.2 }, this.scene);
+      shield.position = this.mesh.position.add(this.camera.getForwardRay().direction.scale(2));
+      shield.position.y = 1;
+      shield.lookAt(this.mesh.position);
+      shield.rotation.y += Math.PI;
+      const mat = new StandardMaterial("shieldMat", this.scene);
+      mat.diffuseColor = new Color3(0.2, 0.6, 1.0);
+      mat.alpha = 0.4;
+      shield.material = mat;
+      setTimeout(() => shield.dispose(), arch.durationMs);
+    } else if (arch.id === 'sensor_sweep') {
+      const sweep = new SensorSweepEffect(this.scene);
+      sweep.deploy(this.mesh.position, 25, arch.durationMs);
+    }
+
+    window.dispatchEvent(new CustomEvent('raidGadgetDeployed', { detail: { itemId: arch.id } }));
   }
 
   private setupInput() {
@@ -345,13 +397,13 @@ export class PlayerController {
       this.stamina = Math.max(0, this.stamina - 20 * dt);
       if (this.stamina === 0) this.staminaDepleted = true;
     } else {
-      const regenRate = this.staminaDepleted ? 8 : 14;
+      const regenRate = (this.staminaDepleted ? 8 : 14) * this.suitStaminaRegenMultiplier;
       this.stamina = Math.min(this.maxStamina, this.stamina + regenRate * dt);
       if (this.staminaDepleted && this.stamina >= 25) this.staminaDepleted = false;
     }
 
     const canSprint = isSprinting && !this.staminaDepleted;
-    const currentSpeed = canSprint ? this.moveSpeed * this.sprintMultiplier : this.moveSpeed;
+    const currentSpeed = (canSprint ? this.moveSpeed * this.sprintMultiplier : this.moveSpeed) * this.suitSpeedMultiplier;
 
     const moveDirection = new Vector3(right, 0, forward).normalize();
     
@@ -368,7 +420,7 @@ export class PlayerController {
     
     // Jump (debounce jump SFX — grounded can stay true for multiple ticks)
     if (this.inputMap['Space'] && this.isGrounded) {
-      currentVelocity.y = this.jumpForce;
+      currentVelocity.y = this.jumpForce * this.suitJumpMultiplier;
       // Each jump costs a small amount of stamina
       this.stamina = Math.max(0, this.stamina - 10);
       if (this.stamina === 0) this.staminaDepleted = true;
@@ -389,24 +441,54 @@ export class PlayerController {
     // Footstep Audio (muted on ship hub — deck ambience handled separately)
     if (!onShipHub && this.isGrounded && velocity.lengthSquared() > 0.1) {
       let stepInterval = canSprint ? 300 : 500;
+      
+      // Surface-specific interval modifiers
       if (this.groundSurfaceSound === 'metal') stepInterval *= 0.88;
+      else if (this.groundSurfaceSound === 'water') stepInterval *= 1.15;
+      else if (this.groundSurfaceSound === 'debris') stepInterval *= 0.95;
+
       const now = Date.now();
       if (now - this.lastFootstepTime > stepInterval) {
-        const metal = this.groundSurfaceSound === 'metal';
-        this.footstepSound.setVolume(metal ? AudioMix.footstepVolumeMetal : AudioMix.footstepVolume);
-        this.footstepSound.setPlaybackRate(
-          (metal
-            ? AudioMix.footstepRateMin + AudioMix.footstepRateMetalBoost
-            : AudioMix.footstepRateMin) + Math.random() * AudioMix.footstepRateJitter
-        );
+        const surface = this.groundSurfaceSound;
+        const metal = surface === 'metal';
+        const water = surface === 'water';
+        const debris = surface === 'debris';
+        
+        let volume = metal ? AudioMix.footstepVolumeMetal : AudioMix.footstepVolume;
+        if (canSprint) volume *= 1.45; // Sprinting is louder
+
+        this.footstepSound.setVolume(volume);
+        
+        let rate = AudioMix.footstepRateMin;
+        if (metal) rate += AudioMix.footstepRateMetalBoost;
+        else if (water) rate -= 0.12; // Sloshing is slower/lower pitch
+        else if (debris) rate += 0.05;
+
+        this.footstepSound.setPlaybackRate(rate + Math.random() * AudioMix.footstepRateJitter * 2);
         this.footstepSound.play();
         this.lastFootstepTime = now;
       }
     }
 
+    // Battery Warning Audio
+    if (!onShipHub && this.flashlightOn && this.battery / this.maxBattery < 0.15) {
+      if (!this.batteryWarningPlayed) {
+        this.batteryWarningPlayed = true;
+        this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeFlashlight * 2);
+        this.uiBlipSound.setPlaybackRate(0.85); // Low warning tone
+        this.uiBlipSound.play();
+        setTimeout(() => {
+          this.uiBlipSound.setPlaybackRate(1.15); // Rising follow-up
+          this.uiBlipSound.play();
+        }, 220);
+      }
+    } else if (this.battery / this.maxBattery > 0.2) {
+      this.batteryWarningPlayed = false;
+    }
+
     if (onShipHub) {
       if (this.battery < this.maxBattery) {
-        this.battery = Math.min(this.maxBattery, this.battery + 2.8 * dt);
+        this.battery = Math.min(this.maxBattery, this.battery + 2.8 * this.suitBatteryRechargeMultiplier * dt);
       }
       this.flashlight.intensity = flashlightOutputIntensity({
         flashlightOn: this.flashlightOn,

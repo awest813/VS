@@ -24,6 +24,10 @@ export class Game {
   public navigationPlugin: RecastJSPlugin | null = null;
   public player: any = null; // Using any to avoid circular dependency for now
   
+  /** Live cache of database state for engine systems. */
+  public contracts: any[] = [];
+  public playerProfile: any = null;
+  
   /** In-raid backpack only — forfeited on death; persists across station ↔ moon; saved to Dexie stash on extract (see scenes). Not “yours” until successful extract pipeline. */
   public raidInventory: { itemId: string, quantity: number, stats?: any }[] = [];
   /** False after leaving the ship until first loadout staging runs for this run. */
@@ -33,6 +37,9 @@ export class Game {
   public stationExtractPending = false;
   /** Hostiles killed while in the station (for “Clear Station Debris”); reset when docking from the ship. */
   public enemiesKilledStation = 0;
+  /** Objectives tracked during a raid chain or direct drop. Reset on ship return. */
+  public terminalsHacked = 0;
+  public dataRecoveredIds: string[] = [];
 
   /** Station/moon scenes set each frame — dims fills + tightens AI via `EnemyAI`. */
   public raidEnvironmentalSurge = false;
@@ -63,15 +70,26 @@ export class Game {
     this.havokPlugin = new HavokPlugin(true, havokInstance);
 
     // Initialize Recast Navigation
-    const recast = await Recast();
-    this.navigationPlugin = new RecastJSPlugin(recast);
+    try {
+      // Emscripten modules (like recast-detour) often need an explicit Module object 
+      // to avoid global scope pollution errors in strict ESM/Vite environments.
+      const recastFactory = (Recast as any).default || Recast;
+      const recastInstance = await recastFactory();
+      
+      if (recastInstance) {
+        this.navigationPlugin = new RecastJSPlugin(recastInstance);
+        console.log('Recast Navigation initialized successfully.');
+      }
+    } catch (e) {
+      console.warn('Recast Navigation initialization failed. AI pathfinding will be disabled.', e);
+    }
 
     this.stateMachine.onStateChange((newState, oldState) => {
       void this.handleStateChange(newState, oldState);
     });
 
-    // Start with Ship
-    this.stateMachine.setState(GameState.SHIP);
+    // Start with the title screen — React UI will call game.startGame() on button press
+    this.stateMachine.setState(GameState.START_MENU);
 
     // Run render loop
     this.engine.runRenderLoop(() => {
@@ -129,9 +147,18 @@ export class Game {
       // Defensive: kill counter is gated by station entry too, but reset on hub return so
       // a partial raid that exited via death/abort can't leak progress into the next dock.
       this.enemiesKilledStation = 0;
+      this.terminalsHacked = 0;
+      this.dataRecoveredIds = [];
+      await this.syncDataFromDb();
     }
 
     switch (state) {
+      case GameState.START_MENU:
+      case GameState.RESULTS:
+        // Minimal black scene — React UI overlays render on top
+        this.activeScene = new Scene(this.engine);
+        this.activeScene.clearColor = new Color4(0, 0, 0, 1);
+        break;
       case GameState.SHIP:
         await this.loadShipScene();
         break;
@@ -145,7 +172,6 @@ export class Game {
         await this.loadPlanetScene();
         break;
       default:
-        // Generic fallback scene
         this.activeScene = new Scene(this.engine);
         this.activeScene.clearColor = new Color4(0, 0, 0, 1);
         break;
@@ -174,5 +200,20 @@ export class Game {
     const { PlanetScene } = await import('./scenes/PlanetScene');
     const planet = new PlanetScene(this);
     this.activeScene = await planet.create();
+  }
+
+  public async syncDataFromDb() {
+    this.contracts = await db.contracts.toArray();
+    this.playerProfile = await db.playerProfile.get(1);
+  }
+
+  /** Called by the React title screen to begin the game. */
+  public startGame() {
+    this.stateMachine.setState(GameState.SHIP);
+  }
+
+  /** Called after all contracts are complete to show the results screen. */
+  public showResults() {
+    this.stateMachine.setState(GameState.RESULTS);
   }
 }

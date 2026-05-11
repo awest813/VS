@@ -17,8 +17,9 @@ export interface StationRaidExtractResult {
 export async function persistStationRaidExtract(options: {
   inventory: RaidPersistItem[];
   stationKillsSinceDock: number;
+  game?: { terminalsHacked?: number; dataRecoveredIds?: string[] };
 }): Promise<StationRaidExtractResult> {
-  const { inventory, stationKillsSinceDock } = options;
+  const { inventory, stationKillsSinceDock, game } = options;
   let paidContractTitle: string | null = null;
   let paidContractReward = 0;
 
@@ -67,7 +68,7 @@ export async function persistStationRaidExtract(options: {
       }
     };
 
-    if (activeContract && contractPayoutEligible(activeContract, inventory, stationKillsSinceDock)) {
+    if (activeContract && contractPayoutEligible(activeContract, inventory, stationKillsSinceDock, game)) {
       await payContract(activeContract);
       paidContractTitle = activeContract.title;
       paidContractReward = activeContract.reward;

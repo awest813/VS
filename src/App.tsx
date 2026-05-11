@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, type CSSProperties } from 'react';
 import { Game } from './game/Game';
 import { RAID_MEDKIT_COOLDOWN_MS, RAID_BANDAGE_COOLDOWN_MS } from './game/player/PlayerController';
+import { GADGET_ARCHETYPES, type GadgetItemId } from './game/gadgets/gadgetDefinitions';
 import { RAID_GADGET_COOLDOWN_MS } from './game/raid/raidGadget';
 import { RAID_LORE_BY_SEGMENT } from './game/level/raidLoreTerminals';
 import { GameState } from './game/StateMachine';
@@ -48,6 +49,23 @@ function formatItemId(id: string): string {
     shotgun_01: 'Pump shotgun',
     pulse_rifle: 'Pulse rifle',
     carbine_mk2: 'Combat carbine',
+    thermal_lance: 'Thermal lance',
+    void_disruptor: 'Void disruptor',
+    smg_flechette: 'Flechette SMG',
+    slug_cannon: 'Slug cannon',
+    pistol_std: 'Standard pistol',
+    revolver_454: '.454 Revolver',
+    pulse_compact: 'Compact pulse',
+    ammo_12g: '12g Buckshot',
+    ammo_556: '5.56mm Standard',
+    ammo_762_ap: '7.62mm AP',
+    thermal_cell: 'Thermal cell',
+    void_charge: 'Void charge',
+    ammo_20g_slug: '20g Slug',
+    ammo_454_mag: '.454 Magnum',
+    flare_chem: 'Chem flare',
+    shield_deploy: 'Portable shield',
+    sensor_sweep: 'Sensor sweep',
   };
   return map[id] ?? id.replace(/_/g, ' ');
 }
@@ -74,6 +92,7 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [pointerLocked, setPointerLocked] = useState(typeof document !== 'undefined' && !!document.pointerLockElement);
   const [stationRaidKills, setStationRaidKills] = useState(0);
   const [equippedWeaponItemId, setEquippedWeaponItemId] = useState<string>('rifle_01');
+  const [suitClass, setSuitClass] = useState<string>('pathfinder');
   const [toast, setToast] = useState<string | null>(null);
   const [medkitCooldownMs, setMedkitCooldownMs] = useState(0);
   const [bandageCooldownMs, setBandageCooldownMs] = useState(0);
@@ -83,10 +102,19 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [loreTerminalText, setLoreTerminalText] = useState<string | null>(null);
   const [openMerchantId, setOpenMerchantId] = useState<string | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeTab, setNoticeTab] = useState<'open' | 'history' | 'lore'>('open');
+  const [isDeploying, setIsDeploying] = useState(false);
   const [hitMarker, setHitMarker] = useState(false);
   const [raidFailed, setRaidFailed] = useState(false);
+  const [hasSaveData, setHasSaveData] = useState(false);
+  const [showNewGameConfirm, setShowNewGameConfirm] = useState(false);
 
   const shipOpsDialogRef = useRef<HTMLDivElement>(null);
+
+  const checkSaveData = useCallback(async () => {
+    const count = await db.playerProfile.count();
+    setHasSaveData(count > 0);
+  }, []);
 
   const refreshDbToState = useCallback(async () => {
     const items = await db.stashItems.toArray();
@@ -100,17 +128,36 @@ const App: React.FC<AppProps> = ({ game }) => {
     if (profile) {
       setMoney(profile.money);
       setProfileUpgrades(normalizeUpgradeState(profile));
+      setSuitClass(profile.suitClass || 'pathfinder');
     } else {
       setMoney(0);
       setProfileUpgrades(DEFAULT_UPGRADE_STATE);
+    }
+    await game.syncDataFromDb();
+
+    // Auto-trigger results screen when all contracts completed and back on ship
+    const currentState = game.stateMachine.getState();
+    if (currentState === GameState.SHIP) {
+      const allContracts = await db.contracts.toArray();
+      if (allContracts.length > 0 && allContracts.every(c => c.isCompleted)) {
+        setTimeout(() => game.showResults(), 2400);
+      }
     }
   }, []);
 
   useEffect(() => {
     void refreshDbToState();
 
-    const cleanup = game.stateMachine.onStateChange((newState) => {
+    void checkSaveData();
+    const cleanup = game.stateMachine.onStateChange((newState, oldState) => {
       setGameState(newState);
+      
+      // Trigger deployment cinematic when moving from SHIP to a raid scene
+      if (oldState === GameState.SHIP && 
+         (newState === GameState.STATION || newState === GameState.PLANET)) {
+        setIsDeploying(true);
+        setTimeout(() => setIsDeploying(false), 1600);
+      }
     });
 
     const interval = setInterval(() => {
@@ -140,6 +187,7 @@ const App: React.FC<AppProps> = ({ game }) => {
         setHoveredTarget(game.player.hoveredInteractable || null);
         setMedkitCooldownMs(game.player.medkitCooldownRemainingMs);
         setBandageCooldownMs(game.player.bandageCooldownRemainingMs);
+        if (game.player.suitClass) setSuitClass(game.player.suitClass);
       } else {
         setGadgetCooldownMs(0);
       }
@@ -224,15 +272,21 @@ const App: React.FC<AppProps> = ({ game }) => {
       }
     };
     const onDeath = () => setToast('Raid failed · backpack forfeited. Restage in ship ops.');
+    const onEngineToast = (e: Event) => {
+      const ce = e as CustomEvent<{ message?: string }>;
+      if (ce.detail?.message) setToast(ce.detail.message);
+    };
     window.addEventListener('raidGadgetDeployed', onGadget);
     window.addEventListener('raidLootPicked', onLoot as EventListener);
     window.addEventListener('raidExtractComplete', onExtract as EventListener);
     window.addEventListener('raidPlayerDeath', onDeath);
+    window.addEventListener('toast', onEngineToast as EventListener);
     return () => {
       window.removeEventListener('raidGadgetDeployed', onGadget);
       window.removeEventListener('raidLootPicked', onLoot as EventListener);
       window.removeEventListener('raidExtractComplete', onExtract as EventListener);
       window.removeEventListener('raidPlayerDeath', onDeath);
+      window.removeEventListener('toast', onEngineToast as EventListener);
     };
   }, []);
 
@@ -402,6 +456,16 @@ const App: React.FC<AppProps> = ({ game }) => {
     }
   };
 
+  const changeSuitClass = async (sc: string) => {
+    await db.transaction('rw', db.playerProfile, async () => {
+      const profile = await db.playerProfile.toCollection().first();
+      if (!profile) return;
+      await db.playerProfile.update(profile.id!, { suitClass: sc as any });
+    });
+    setSuitClass(sc);
+    setToast(`Suit reconfigured to ${sc.replace(/_/g, ' ')} protocol.`);
+  };
+
   const stageItemToLoadout = async (item: StashItem) => {
     if (item.id === undefined) return;
     const itemId = item.id;
@@ -479,7 +543,7 @@ const App: React.FC<AppProps> = ({ game }) => {
   const raidContractZone =
     gameState === GameState.STATION ? 'station' : gameState === GameState.MOON_BASE ? 'moon' : gameState === GameState.PLANET ? 'planet' : null;
   const raidProgressLine = activeRaidContract
-    ? contractProgressSummary(activeRaidContract.title, inventory, stationRaidKills)
+    ? contractProgressSummary(activeRaidContract.title, inventory, stationRaidKills, game)
     : null;
 
   const medkitQty = inventory.reduce((n, i) => n + (i.itemId === 'medkit' ? i.quantity : 0), 0);
@@ -505,6 +569,24 @@ const App: React.FC<AppProps> = ({ game }) => {
     paddingTop: 'max(24px, env(safe-area-inset-top))',
   };
 
+  // ── NEW CAMPAIGN handler ────────────────────────────────────────────────────
+  const handleNewCampaign = async () => {
+    await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
+      await db.playerProfile.clear();
+      await db.stashItems.clear();
+      await db.contracts.clear();
+    });
+    await db.initializeDefault();
+    await refreshDbToState();
+    await checkSaveData();
+    game.startGame();
+  };
+
+  const handleResume = async () => {
+    await refreshDbToState();
+    game.startGame();
+  };
+
   return (
     <div
       className="ui-overlay"
@@ -521,6 +603,253 @@ const App: React.FC<AppProps> = ({ game }) => {
         lineHeight: 1.45,
       }}
     >
+      {/* ── TITLE SCREEN ────────────────────────────────────────────────── */}
+      {gameState === GameState.START_MENU && (
+        <div
+          role="main"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 100,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'radial-gradient(ellipse at 50% 60%, rgba(10,18,35,1) 0%, rgba(2,4,10,1) 100%)',
+            pointerEvents: 'auto',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Starfield / Particles */}
+          <div style={{ position: 'absolute', inset: 0, opacity: 0.4, zIndex: 0 }} className="ui-drift">
+            <div style={{ position: 'absolute', width: 2, height: 2, background: '#fff', borderRadius: '50%', top: '20%', left: '30%', boxShadow: '0 0 10px #fff' }} />
+            <div style={{ position: 'absolute', width: 1, height: 1, background: '#fff', borderRadius: '50%', top: '45%', left: '70%' }} />
+            <div style={{ position: 'absolute', width: 3, height: 3, background: '#38bdf8', borderRadius: '50%', top: '80%', left: '20%', opacity: 0.6, boxShadow: '0 0 15px #38bdf8' }} />
+            <div style={{ position: 'absolute', width: 1, height: 1, background: '#fff', borderRadius: '50%', top: '15%', left: '85%' }} />
+            <div style={{ position: 'absolute', width: 2, height: 2, background: '#fff', borderRadius: '50%', top: '65%', left: '15%' }} />
+          </div>
+
+          {/* Scanline overlay */}
+          <div aria-hidden style={{ position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.18) 2px, rgba(0,0,0,0.18) 4px)', pointerEvents: 'none', zIndex: 1 }} />
+          {/* Heavy Vignette */}
+          <div aria-hidden style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse at center, transparent 30%, rgba(2,6,14,0.95) 100%)', pointerEvents: 'none', zIndex: 1 }} />
+
+          <div style={{ position: 'relative', zIndex: 2, textAlign: 'center', maxWidth: 580, padding: '0 24px' }}>
+            {/* Eyebrow */}
+            <div style={{ fontSize: 11, letterSpacing: '0.36em', fontWeight: 700, color: 'rgba(125, 185, 255, 0.65)', marginBottom: 20, textTransform: 'uppercase' as const }}>
+              ICV RELENTLESS · MERIDIAN-CLASS FREIGHTER
+            </div>
+
+            {/* Game title */}
+            <h1 style={{
+              margin: '0 0 10px 0',
+              fontSize: 'clamp(3rem, 10vw, 6rem)',
+              fontWeight: 900,
+              letterSpacing: '-0.02em',
+              lineHeight: 1,
+              background: 'linear-gradient(135deg, #e8f4ff 0%, #94c8ff 40%, #4898e8 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              textShadow: 'none',
+              filter: 'drop-shadow(0 0 40px rgba(80, 160, 255, 0.4))',
+            }}>
+              VOID SOVEREIGNS
+            </h1>
+
+            <p style={{ margin: '0 0 48px 0', fontSize: 16, lineHeight: 1.65, color: 'rgba(175, 200, 235, 0.78)', fontWeight: 400, letterSpacing: '0.01em' }}>
+              The derelict stack drifts at the edge of the transit corridor. Someone left data behind.
+              <br />
+              <span style={{ color: 'rgba(130, 165, 210, 0.6)', fontSize: 14 }}>Board. Extract. Get paid. Don't die.</span>
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, width: '100%', alignItems: 'center' }}>
+              {hasSaveData && (
+                <div className="ui-bracket" style={{ padding: 2 }}>
+                  <button
+                    type="button"
+                    onClick={handleResume}
+                    className="ui-fade-in"
+                    style={{
+                      padding: '16px 52px',
+                      fontSize: 16,
+                      fontWeight: 700,
+                      letterSpacing: '0.12em',
+                      background: 'linear-gradient(180deg, #38bdf8 0%, #0284c7 100%)',
+                      color: '#fff',
+                      border: '1px solid rgba(255,255,255,0.15)',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      boxShadow: '0 8px 32px rgba(2, 132, 199, 0.4)',
+                      width: 320,
+                      fontFamily: fontUi,
+                    }}
+                  >
+                    RESUME EXPEDITION
+                  </button>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (hasSaveData) {
+                    setShowNewGameConfirm(true);
+                  } else {
+                    void handleNewCampaign();
+                  }
+                }}
+                style={{
+                  padding: '14px 52px',
+                  fontSize: 14,
+                  fontWeight: 600,
+                  letterSpacing: '0.1em',
+                  background: hasSaveData ? 'rgba(30, 41, 59, 0.65)' : 'linear-gradient(180deg, #38bdf8 0%, #0284c7 100%)',
+                  color: hasSaveData ? 'rgba(186, 230, 253, 0.9)' : '#fff',
+                  border: '1px solid rgba(56, 189, 248, 0.35)',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  boxShadow: hasSaveData ? 'none' : '0 8px 32px rgba(2, 132, 199, 0.4)',
+                  width: 320,
+                  transition: 'all 0.2s ease',
+                  fontFamily: fontUi,
+                }}
+              >
+                {hasSaveData ? 'START NEW GAME' : 'BEGIN EXPEDITION'}
+              </button>
+
+              <div style={{ marginTop: 20, fontSize: 10, color: 'rgba(130, 165, 210, 0.35)', letterSpacing: '0.15em', fontWeight: 600 }}>
+                BUILD 0.2.4-BETA · CRYPTOGRAPHIC LINK SECURE
+              </div>
+            </div>
+
+            {/* Confirmation Dialog for New Game */}
+            {showNewGameConfirm && (
+              <div style={{
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(2, 6, 14, 0.92)',
+                backdropFilter: 'blur(10px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 200,
+              }}>
+                <div className="ui-panel ui-fade-in" style={{ padding: 48, textAlign: 'center', maxWidth: 460, border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+                  <div style={{ color: '#ef4444', fontSize: 10, fontWeight: 800, letterSpacing: '0.3em', marginBottom: 16 }}>⚠ CRITICAL SYSTEM OVERWRITE</div>
+                  <h2 style={{ margin: '0 0 16px 0', fontSize: 22, fontWeight: 700, letterSpacing: '-0.01em' }}>ERASE ALL PROGRESS?</h2>
+                  <p style={{ margin: '0 0 32px 0', fontSize: 14, color: 'rgba(160, 175, 200, 0.85)', lineHeight: 1.6 }}>
+                    Confirmed: Starting a new expedition will <span style={{ color: '#fff', fontWeight: 700 }}>permanently purge</span> all stash items, mission history, and character reputation.
+                  </p>
+                  <div style={{ display: 'flex', gap: 14 }}>
+                    <button
+                      onClick={() => setShowNewGameConfirm(false)}
+                      style={{ flex: 1, padding: '14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+                    >
+                      ABORT
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowNewGameConfirm(false);
+                        void handleNewCampaign();
+                      }}
+                      style={{ flex: 1, padding: '14px', background: 'linear-gradient(180deg, #ef4444, #991b1b)', border: 'none', color: '#fff', fontWeight: 700, borderRadius: 6, cursor: 'pointer', fontSize: 13, boxShadow: '0 4px 20px rgba(239, 68, 68, 0.3)' }}
+                    >
+                      PURGE & RESTART
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <p style={{ marginTop: 28, fontSize: 11, color: 'rgba(120, 145, 175, 0.55)', letterSpacing: '0.06em' }}>
+              WASD MOVE · MOUSE LOOK · E INTERACT · R RELOAD · F FLASHLIGHT · H MEDKIT · G GADGET
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── RESULTS / VICTORY SCREEN ─────────────────────────────────────── */}
+      {gameState === GameState.RESULTS && (
+        <div
+          role="main"
+          aria-label="Mission results"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 100,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'radial-gradient(ellipse at 50% 40%, rgba(5,20,10,1) 0%, rgba(2,4,8,1) 100%)',
+            pointerEvents: 'auto',
+          }}
+        >
+          <div aria-hidden style={{ position: 'absolute', inset: 0, backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.14) 2px, rgba(0,0,0,0.14) 4px)', pointerEvents: 'none' }} />
+
+          <div style={{ position: 'relative', zIndex: 2, textAlign: 'center', maxWidth: 560, padding: '0 24px' }}>
+            <div style={{ fontSize: 11, letterSpacing: '0.36em', fontWeight: 700, color: 'rgba(100, 220, 130, 0.65)', marginBottom: 16 }}>
+              ALL CONTRACTS SETTLED
+            </div>
+            <h1 style={{
+              margin: '0 0 8px 0',
+              fontSize: 'clamp(2.5rem, 8vw, 5rem)',
+              fontWeight: 900,
+              letterSpacing: '-0.01em',
+              background: 'linear-gradient(135deg, #d4ffd4 0%, #5efa8a 50%, #22c55e 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              filter: 'drop-shadow(0 0 30px rgba(60, 220, 100, 0.4))',
+            }}>
+              MISSION COMPLETE
+            </h1>
+            <p style={{ margin: '0 0 32px 0', fontSize: 14, color: 'rgba(175, 220, 190, 0.75)', lineHeight: 1.6 }}>
+              Every contract cleared. The freighter extracts clean.<br />
+              <span style={{ fontFamily: fontMono, color: '#4ade80' }}>Credits transferred. Reputation: ESTABLISHED.</span>
+            </p>
+
+            {/* Contract summary */}
+            <div style={{ ...panelBase, padding: '20px 28px', marginBottom: 32, textAlign: 'left' }}>
+              <div style={{ fontSize: 10, letterSpacing: '0.18em', color: 'rgba(130, 185, 150, 0.65)', marginBottom: 14, fontWeight: 700 }}>DEBRIEF</div>
+              {contracts.map(c => (
+                <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: 13 }}>
+                  <span style={{ color: 'rgba(200, 230, 210, 0.9)' }}>{c.title}</span>
+                  <span style={{ fontFamily: fontMono, color: '#4ade80', fontSize: 12 }}>¤ {c.reward.toLocaleString()}</span>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14, fontSize: 14, fontWeight: 700 }}>
+                <span style={{ color: 'rgba(200, 230, 210, 0.8)' }}>TOTAL EARNED</span>
+                <span style={{ fontFamily: fontMono, color: '#86efac' }}>¤ {contracts.reduce((s, c) => s + c.reward, 0).toLocaleString()}</span>
+              </div>
+            </div>
+
+            <button
+              id="btn-new-campaign"
+              type="button"
+              onClick={handleNewCampaign}
+              style={{
+                padding: '14px 44px',
+                fontSize: 14,
+                fontFamily: fontUi,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase' as const,
+                cursor: 'pointer',
+                background: 'linear-gradient(135deg, rgba(15, 50, 25, 0.95), rgba(10, 35, 18, 0.95))',
+                color: '#86efac',
+                border: '1px solid rgba(74, 222, 128, 0.35)',
+                borderRadius: 8,
+                boxShadow: '0 0 28px rgba(34, 197, 94, 0.2)',
+              }}
+            >
+              New Campaign
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Low-health screen vignette */}
       {healthLow && inFirstPerson && (
         <div
@@ -553,7 +882,7 @@ const App: React.FC<AppProps> = ({ game }) => {
             pointerEvents: 'none',
           }}
         >
-          <div style={{ fontSize: 'clamp(2rem, 6vw, 4rem)', fontWeight: 800, letterSpacing: '0.12em', color: '#ef4444', textShadow: '0 0 40px rgba(239,68,68,0.55)' }}>
+          <div style={{ fontSize: 'clamp(2rem, 6vw, 4rem)', fontWeight: 800, letterSpacing: '0.12em', color: '#ef4444', textShadow: '0 0 40px rgba(239,68,68,0.55)' }} className="glitch-effect">
             RAID FAILED
           </div>
           <div style={{ marginTop: 14, fontSize: 14, color: 'rgba(200,210,225,0.82)', letterSpacing: '0.06em' }}>
@@ -568,7 +897,6 @@ const App: React.FC<AppProps> = ({ game }) => {
       )}
 
       {(gameState === GameState.STATION || gameState === GameState.MOON_BASE || gameState === GameState.PLANET) && environmentalSurge && (
-        // Layering: below toast (24) / lore (26); above contract (7) & pointer hint (20).
         <div
           style={{
             position: 'absolute',
@@ -843,126 +1171,110 @@ const App: React.FC<AppProps> = ({ game }) => {
             maxWidth: 'min(300px, calc(100vw - 48px))',
           }}
         >
-          <div style={{ ...panelBase, padding: '14px 16px', marginBottom: 12 }}>
-            <h2 style={{ margin: '0 0 8px 0', ...hud.label() }}>
-              BACKPACK
+          <div className="ui-bracket ui-panel ui-fade-in" style={{ padding: '14px 18px', marginBottom: 12, border: '1px solid rgba(56, 189, 248, 0.15)' }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(255,255,255,0.015) 1px, rgba(255,255,255,0.015) 2px)', pointerEvents: 'none' }} />
+            <h2 style={{ margin: '0 0 8px 0', ...hud.label(), fontSize: 10, letterSpacing: '0.25em', color: '#38bdf8' }}>
+              STORAGE / BACKPACK
             </h2>
             {inventory.length === 0 ? (
-              <p style={{ margin: 0, color: 'rgba(140,155,175,0.65)', fontSize: 13 }}>
-                Empty — raid loot is not yours until a successful extract to the ship. Dying forfeits this pack.
+              <p style={{ margin: 0, color: 'rgba(140,155,175,0.45)', fontSize: 11, fontStyle: 'italic' }}>
+                Empty — loot secured on extract.
               </p>
             ) : (
               <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.55 }}>
                 {inventory.map((item, idx) => (
-                  <li key={`${item.itemId}-${idx}`} style={{ fontSize: 13, color: lootColorForItemId(item.itemId) }}>
-                    {formatItemId(item.itemId)}{' '}
-                    <span style={{ fontFamily: fontMono, color: 'rgba(180, 200, 230, 0.9)', fontSize: 12 }}>×{item.quantity}</span>
+                  <li key={`${item.itemId}-${idx}`} style={{ fontSize: 12, color: lootColorForItemId(item.itemId), fontWeight: 500 }}>
+                    {formatItemId(item.itemId).toUpperCase()}{' '}
+                    <span style={{ fontFamily: fontMono, color: 'rgba(180, 200, 230, 0.65)', fontSize: 11 }}>[{item.quantity}]</span>
                   </li>
                 ))}
               </ul>
             )}
           </div>
           <div
+            className="ui-panel ui-bracket ui-fade-in"
             style={{
-              ...panelBase,
-              padding: '16px 16px',
-              outline: statusPanelOutline,
+              padding: '16px 20px',
+              border: '1px solid rgba(56, 189, 248, 0.15)',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
             }}
           >
-            <h2 style={{ margin: '0 0 10px 0', ...hud.label() }}>
-              STATUS
-            </h2>
-            {stationRaidKills > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Kills</span>
-                <span style={{ fontFamily: fontMono, fontSize: 14, fontWeight: 600, color: '#fda4af' }}>{stationRaidKills}</span>
+            <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(56, 189, 248, 0.02) 1px, rgba(56, 189, 248, 0.02) 2px)', pointerEvents: 'none' }} />
+            
+            <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ ...hud.sectionEyebrow('suit'), color: '#38bdf8', fontSize: 9 }}>
+                SUIT-LINK // <span style={{ color: '#fff', fontWeight: 800 }}>{suitClass.toUpperCase()}</span>
               </div>
-            )}
-            <div
-              style={{
-                marginBottom: 10,
-                paddingBottom: 10,
-                borderBottom: '1px solid rgba(255,255,255,0.06)',
-              }}
-            >
-              <div style={{ marginBottom: 6, ...hud.sectionEyebrow('cool') }}>PRIMARY WEAPON</div>
-              <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>{formatItemId(equippedWeaponItemId)}</div>
-              <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: 'rgba(150, 170, 200, 0.88)' }}>{getWeaponRaidHudHint(equippedWeaponItemId)}</p>
+              <div style={{ fontSize: 8, color: 'rgba(56, 189, 248, 0.4)', fontFamily: fontMono, letterSpacing: '0.1em' }}>
+                BIO_MONITOR_ACTIVE
+              </div>
             </div>
-            <div style={{ marginBottom: 10 }}>
+
+            {/* Health Bar */}
+            <div style={{ marginBottom: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Health</span>
-                <span style={{ fontFamily: fontMono, fontSize: 14, fontWeight: 550, color: healthLow ? '#fda4af' : '#e8edf5' }}>
-                  {Math.round(health.current)} / {health.max}
+                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.15em', color: '#94a3b8' }}>VITALS</span>
+                <span style={{ fontFamily: fontMono, fontSize: 13, fontWeight: 700, color: healthLow ? '#ef4444' : '#fff' }}>
+                  {Math.round(health.current)}%
                 </span>
               </div>
-              <div style={{ height: 6, borderRadius: 4, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
-                <div style={{ width: `${healthPct}%`, height: '100%', background: healthBarColor, borderRadius: 4, transition: 'width 0.15s ease' }} />
+              <div style={{ height: 8, background: 'rgba(0,0,0,0.4)', borderRadius: 1, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ 
+                  width: `${healthPct}%`, 
+                  height: '100%', 
+                  background: `repeating-linear-gradient(90deg, ${healthBarColor}, ${healthBarColor} 4px, transparent 4px, transparent 5px)`, 
+                  transition: 'width 0.2s ease-out' 
+                }} />
               </div>
             </div>
-            <div style={{ marginBottom: 12 }}>
+
+            {/* Stamina Bar */}
+            <div style={{ marginBottom: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Flashlight</span>
-                <span
-                  style={{
-                    fontFamily: fontMono,
-                    fontSize: 13,
-                    color: batteryLow ? '#fcd34d' : 'rgba(150, 210, 255, 0.95)',
-                    fontWeight: batteryLow ? 600 : 400,
-                  }}
-                >
-                  {battery.current}%
+                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: '0.15em', color: '#94a3b8' }}>KINETIC</span>
+                <span style={{ fontFamily: fontMono, fontSize: 11, fontWeight: 700, color: staminaLow ? '#fb923c' : '#7dd3fc' }}>
+                  {Math.round(stamina.current)}
                 </span>
               </div>
-              <div style={{ height: 4, borderRadius: 3, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
-                <div
-                  style={{
-                    width: `${batteryPct}%`,
-                    height: '100%',
-                    background: batteryBarColor,
-                    borderRadius: 3,
-                    transition: 'width 0.15s ease, background 0.2s ease',
-                  }}
-                />
+              <div style={{ height: 6, background: 'rgba(0,0,0,0.4)', borderRadius: 1, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <div style={{ 
+                  width: `${staminaPct}%`, 
+                  height: '100%', 
+                  background: `repeating-linear-gradient(90deg, ${staminaBarColor}, ${staminaBarColor} 4px, transparent 4px, transparent 5px)`, 
+                  transition: 'width 0.15s linear' 
+                }} />
               </div>
             </div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: staminaLow ? '#fb923c' : 'rgba(160, 175, 195, 0.9)' }}>Stamina</span>
-                <span style={{ fontFamily: fontMono, fontSize: 13, color: staminaLow ? '#fb923c' : 'rgba(175, 220, 140, 0.92)', fontWeight: staminaLow ? 600 : 400 }}>
-                  {stamina.current}%
+
+            {/* Ammo Display */}
+            <div style={{ 
+              marginTop: 18, 
+              paddingTop: 12, 
+              borderTop: '1px solid rgba(56, 189, 248, 0.1)',
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center' 
+            }}>
+              <div>
+                <div style={{ fontSize: 8, fontWeight: 800, color: '#94a3b8', marginBottom: 2 }}>MUNITIONS</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#fff' }}>{formatItemId(equippedWeaponItemId).toUpperCase()}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ 
+                  fontFamily: fontMono, 
+                  fontSize: 28, 
+                  fontWeight: 800, 
+                  color: reloading ? '#fbbf24' : ammoLow ? '#ef4444' : '#fff',
+                  lineHeight: 1
+                }}>
+                  {reloading ? '...' : ammo.current}
+                </span>
+                <span style={{ fontSize: 12, color: 'rgba(148, 163, 184, 0.6)', fontFamily: fontMono, marginLeft: 4 }}>
+                  / {ammo.reserve}
                 </span>
               </div>
-              <div style={{ height: 4, borderRadius: 3, background: 'rgba(0,0,0,0.35)', overflow: 'hidden' }}>
-                <div
-                  style={{
-                    width: `${staminaPct}%`,
-                    height: '100%',
-                    background: staminaBarColor,
-                    borderRadius: 3,
-                    transition: 'width 0.12s ease, background 0.2s ease',
-                  }}
-                />
-              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-              <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Ammo</span>
-              <span
-                style={{
-                  fontFamily: fontMono,
-                  fontSize: 26,
-                  fontWeight: 550,
-                  color: reloading ? '#fbbf24' : ammoLow ? '#fda4af' : '#f1f5f9',
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                {reloading ? '…' : ammo.current}
-                <span style={{ fontSize: 15, color: 'rgba(160, 175, 195, 0.85)', fontWeight: 450 }}> / {ammo.reserve}</span>
-              </span>
-            </div>
-            {reloading && (
-              <p style={{ margin: '8px 0 0 0', fontSize: 12, fontWeight: 600, color: '#fcd34d', letterSpacing: '0.06em' }}>RELOADING</p>
-            )}
+          </div>
             <div style={{ marginTop: 12, marginBottom: 10 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
                 <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Medkit</span>
@@ -1013,7 +1325,12 @@ const App: React.FC<AppProps> = ({ game }) => {
             </div>
             <div style={{ marginTop: 12, marginBottom: 10 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Pulse (gadget)</span>
+                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>
+                  {(() => {
+                    const g = inventory.find(i => GADGET_ARCHETYPES[i.itemId as GadgetItemId]);
+                    return g ? formatItemId(g.itemId) : 'Gadget';
+                  })()}
+                </span>
                 <span style={{ fontFamily: fontMono, fontSize: 13, color: 'rgba(180, 210, 255, 0.95)' }}>
                   {gadgetCooldownMs > 0 ? (
                     <span style={{ color: '#93c5fd' }}>{(gadgetCooldownMs / 1000).toFixed(1)}s</span>
@@ -1065,6 +1382,7 @@ const App: React.FC<AppProps> = ({ game }) => {
             role="dialog"
             aria-modal="true"
             aria-labelledby="ship-ops-heading"
+            className="ui-panel ui-fade-in"
             style={{
               position: 'absolute',
               top: 'max(24px, env(safe-area-inset-top))',
@@ -1072,7 +1390,6 @@ const App: React.FC<AppProps> = ({ game }) => {
               transform: 'translateX(-50%)',
               pointerEvents: 'auto',
               zIndex: 31,
-              ...panelBase,
               padding: 'clamp(28px, 4vw, 40px)',
               width: 'min(1120px, calc(100vw - max(48px, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))))',
               maxHeight: 'min(580px, calc(100vh - max(48px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))))',
@@ -1080,10 +1397,14 @@ const App: React.FC<AppProps> = ({ game }) => {
               textAlign: 'center',
             }}
           >
-          <p style={{ margin: '0 0 4px 0', ...hud.sectionEyebrow('ops') }}>OPS / CONTRACT</p>
-          <h1 id="ship-ops-heading" style={{ margin: '0 0 12px 0', fontSize: 'clamp(1.35rem, 2.4vw, 1.85rem)', fontWeight: 700, letterSpacing: '-0.02em' }}>
-            ICV Relentless — Freighter Ops
-          </h1>
+            <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 8px #38bdf8', animation: 'pulse 1s infinite alternate' }} />
+              <div style={{ fontSize: 9, fontWeight: 800, color: '#38bdf8', letterSpacing: '0.15em' }}>COMMAND LINK SECURE</div>
+            </div>
+            <p className="ui-eyebrow ui-eyebrow-ops">OPS / CONTRACT</p>
+            <h1 id="ship-ops-heading" style={{ margin: '0 0 12px 0', fontSize: 'clamp(1.35rem, 2.4vw, 1.85rem)', fontWeight: 700, letterSpacing: '-0.02em' }}>
+              ICV Relentless — Freighter Ops
+            </h1>
           <p style={{ margin: '0 0 20px 0', fontSize: 12, color: 'rgba(160, 175, 200, 0.82)' }}>
             <span style={{ fontFamily: fontMono, color: 'rgba(180, 215, 255, 0.9)' }}>Esc</span> or backdrop click to close · Same data as the cyan bridge screen ·
             {' '}
@@ -1291,12 +1612,13 @@ const App: React.FC<AppProps> = ({ game }) => {
                     const unlocked = isContractUnlocked(contract.title, completedContractCount);
                     const unlockRequirement = getContractUnlockRequirement(contract.title);
                     return (
-                      <div
+                      <button
                         key={contract.id}
+                        type="button"
                         tabIndex={unlocked ? 0 : -1}
-                        role="button"
                         aria-pressed={activeContractId === contract.id}
-                        className={unlocked ? 'ui-card-interactive' : undefined}
+                        disabled={!unlocked}
+                        className={`contract-card ${unlocked ? 'ui-card-interactive' : ''}`}
                         onKeyDown={async (e) => {
                           if (!unlocked) return;
                           if (e.key === 'Enter' || e.key === ' ') {
@@ -1314,7 +1636,6 @@ const App: React.FC<AppProps> = ({ game }) => {
                         }}
                         style={{
                           background: activeContractId === contract.id ? 'rgba(80, 30, 35, 0.78)' : 'rgba(30, 36, 48, 0.92)',
-                          padding: '12px 14px',
                           border: `1px solid ${
                             activeContractId === contract.id
                               ? 'rgba(248, 113, 113, 0.5)'
@@ -1322,9 +1643,9 @@ const App: React.FC<AppProps> = ({ game }) => {
                                 ? 'rgba(255,255,255,0.07)'
                                 : 'rgba(125, 211, 252, 0.18)'
                           }`,
-                          borderRadius: 8,
                           cursor: unlocked ? 'pointer' : 'not-allowed',
                           opacity: unlocked ? 1 : 0.58,
+                          color: '#e2e8f0',
                         }}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
@@ -1370,7 +1691,7 @@ const App: React.FC<AppProps> = ({ game }) => {
                           </div>
                         )}
                         <div style={{ fontSize: 13, color: '#fde68a', fontFamily: fontMono }}>¤ {contract.reward.toLocaleString()}</div>
-                      </div>
+                      </button>
                     );
                   })}
               </div>
@@ -1401,11 +1722,42 @@ const App: React.FC<AppProps> = ({ game }) => {
                 ARMORY
               </h3>
               <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
-                Keep one primary weapon in loadout; staging another from stash swaps the current one back out. Purchased 9×mm goes to stash
-                — move it into loadout before undocking. Quartermaster upgrades install permanently once unlocked, so each completed contract
-                opens heavier weapons tuning and better armor support.
+                Once a contract is selected, deploy via the appropriate airlock row.
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 212, overflowY: 'auto', paddingRight: 4 }}>
+              
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ marginBottom: 8, fontSize: 10, letterSpacing: '0.12em', color: '#7dd3fc', fontWeight: 700 }}>
+                  SUIT SELECTION
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  {[
+                    { id: 'pathfinder', label: 'PATHFINDER', tip: 'Balanced mobility & energy' },
+                    { id: 'bulwark', label: 'BULWARK', tip: '+50% Health, -20% Speed' },
+                    { id: 'tech_specialist', label: 'TECH SPEC', tip: 'Fast hack & sensor range' }
+                  ].map((sc) => (
+                    <button
+                      key={sc.id}
+                      title={sc.tip}
+                      onClick={() => void changeSuitClass(sc.id)}
+                      style={{
+                        padding: '10px 4px',
+                        fontSize: 10,
+                        fontWeight: 700,
+                        fontFamily: fontUi,
+                        cursor: 'pointer',
+                        background: suitClass === sc.id ? 'linear-gradient(180deg, #38bdf8, #0284c7)' : 'rgba(30, 41, 59, 0.7)',
+                        color: suitClass === sc.id ? '#082f49' : 'rgba(186, 230, 253, 0.85)',
+                        border: '1px solid rgba(56, 189, 248, 0.3)',
+                        borderRadius: 6,
+                        letterSpacing: '0.04em',
+                      }}
+                    >
+                      {sc.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 180, overflowY: 'auto', paddingRight: 4 }}>
                 {[
                   ...ARMORY_PRIMARY_OFFERS.map((o) => ({
                     id: o.itemId,
@@ -1430,12 +1782,16 @@ const App: React.FC<AppProps> = ({ game }) => {
                     }}
                     onClick={() => void buyItem(item.id, item.cost, item.qty || 1)}
                     style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
                       background: 'rgba(50, 32, 28, 0.68)',
                       padding: '10px 12px',
                       border: `1px solid ${money >= item.cost ? 'rgba(253, 186, 116, 0.3)' : 'rgba(253, 186, 116, 0.12)'}`,
                       borderRadius: 8,
                       cursor: money >= item.cost ? 'pointer' : 'not-allowed',
                       opacity: money >= item.cost ? 1 : 0.48,
+                      textAlign: 'left'
                     }}
                     >
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
@@ -1478,6 +1834,7 @@ const App: React.FC<AppProps> = ({ game }) => {
                         borderRadius: 8,
                         cursor: canBuy ? 'pointer' : 'default',
                         opacity: offer.unlocked ? 1 : 0.56,
+                        textAlign: 'left'
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
@@ -1502,11 +1859,11 @@ const App: React.FC<AppProps> = ({ game }) => {
                     </div>
                   );
                 })}
-              </div>
             </div>
           </div>
         </div>
-        </>
+      </div>
+      </>
       )}
 
       {/* ── MERCHANT PANEL ─────────────────────────────────────────────────── */}
@@ -1556,6 +1913,7 @@ const App: React.FC<AppProps> = ({ game }) => {
               role="dialog"
               aria-modal="true"
               aria-label={title}
+              className="ui-panel ui-fade-in"
               style={{
                 position: 'absolute',
                 top: 'max(24px, env(safe-area-inset-top))',
@@ -1563,7 +1921,6 @@ const App: React.FC<AppProps> = ({ game }) => {
                 transform: 'translateX(-50%)',
                 pointerEvents: 'auto',
                 zIndex: 31,
-                ...panelBase,
                 padding: 'clamp(24px, 3.5vw, 36px)',
                 width: 'min(520px, calc(100vw - max(48px, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))))',
                 maxHeight: 'min(580px, calc(100vh - max(48px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))))',
@@ -1571,11 +1928,6 @@ const App: React.FC<AppProps> = ({ game }) => {
                 textAlign: 'center',
               }}
             >
-              <p style={{ margin: '0 0 4px 0', ...hud.sectionEyebrow('ops') }}>MERCHANT</p>
-              <h1 style={{ margin: '0 0 8px 0', fontSize: 'clamp(1.15rem, 2.2vw, 1.55rem)', fontWeight: 700 }}>{title}</h1>
-              {flavor && (
-                <p style={{ margin: '0 0 14px 0', fontSize: 12, color: 'rgba(160, 175, 200, 0.82)', fontStyle: 'italic' }}>
-                  "{flavor}"
                 </p>
               )}
               <h2 style={{ color: '#fde68a', margin: '0 0 18px 0', fontSize: 'clamp(1rem, 1.8vw, 1.2rem)', fontFamily: fontMono, fontWeight: 550 }}>¤ {money.toLocaleString()}</h2>
@@ -1654,6 +2006,7 @@ const App: React.FC<AppProps> = ({ game }) => {
             role="dialog"
             aria-modal="true"
             aria-label="Crew Notice Board"
+            className="ui-panel ui-fade-in"
             style={{
               position: 'absolute',
               top: 'max(24px, env(safe-area-inset-top))',
@@ -1661,41 +2014,201 @@ const App: React.FC<AppProps> = ({ game }) => {
               transform: 'translateX(-50%)',
               pointerEvents: 'auto',
               zIndex: 31,
-              ...panelBase,
               padding: 'clamp(24px, 3.5vw, 36px)',
               width: 'min(560px, calc(100vw - max(48px, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))))',
               maxHeight: 'min(580px, calc(100vh - max(48px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))))',
               overflowY: 'auto',
             }}
           >
-            <p style={{ margin: '0 0 4px 0', ...hud.sectionEyebrow('ops') }}>SHIP BULLETIN BOARD</p>
+            <p className="ui-eyebrow ui-eyebrow-ops">SHIP BULLETIN BOARD</p>
             <h1 style={{ margin: '0 0 18px 0', fontSize: 'clamp(1.1rem, 2vw, 1.45rem)', fontWeight: 700, textAlign: 'center' }}>
               ICV Relentless — Crew Notices
             </h1>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
-              {[
-                { tag: '⚠ SHIP NOTICE', text: 'Cargo bay pressurization drill 0300 ship-time. All crew must muster in the aft cross-corridor. Report anomalies to the bridge.' },
-                { tag: '─ MARTA\'S SURPLUS', text: 'Restocked after the last run. Medkits, bandages, and 9×mm fresh from station logistics. No returns on firearms. — M.R.' },
-                { tag: '⚠ SECURITY ADVISORY', text: 'Airlock Alpha authorisation is restricted to command biometrics during active contracts. Tampering is a felony under Frontier Charter Article 18.' },
-                { tag: '─ CREW NOTICE', text: 'Coffee machine in the aft mess is broken again. Anyone with a spare 12-mm fuse strip, see Hendrix. — Engineering' },
-                { tag: '▶ FREIGHT MANIFEST', text: 'ICV Relentless, Meridian-class. Bound: Frontier Station Delta-9. Cargo: medical surplus (declared), survey equipment (restricted). Return ETA: OPEN.' },
-                { tag: '─ SGT. HENDRIX', text: 'Anyone messes with the weapon racks without a sign-out form is on cleanup duty for a month. You know who you are.' },
-              ].map(({ tag, text }, i) => (
-                <div
-                  key={i}
-                  style={{
-                    padding: '10px 14px',
-                    background: 'rgba(20, 28, 40, 0.72)',
-                    border: '1px solid rgba(255,255,255,0.07)',
-                    borderRadius: 8,
-                    textAlign: 'left',
-                  }}
-                >
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: 'rgba(163, 230, 180, 0.85)', marginBottom: 4, fontFamily: fontMono }}>{tag}</div>
-                  <div style={{ fontSize: 12, lineHeight: 1.55, color: 'rgba(200, 212, 228, 0.9)' }}>{text}</div>
-                </div>
-              ))}
+            <div style={{ display: 'flex', gap: 12, borderBottom: '1px solid rgba(255,255,255,0.1)', marginBottom: 20 }}>
+              <button 
+                onClick={() => setNoticeTab('open')}
+                style={{ 
+                  padding: '10px 16px', 
+                  background: 'transparent', 
+                  color: noticeTab === 'open' ? '#38bdf8' : 'rgba(148, 163, 184, 0.6)', 
+                  border: 'none', 
+                  borderBottom: noticeTab === 'open' ? '2px solid #38bdf8' : 'none',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer' 
+                }}
+              >
+                OPEN WARRANTS
+              </button>
+              <button 
+                onClick={() => setNoticeTab('history')}
+                style={{ 
+                  padding: '10px 16px', 
+                  background: 'transparent', 
+                  color: noticeTab === 'history' ? '#34d399' : 'rgba(148, 163, 184, 0.6)', 
+                  border: 'none', 
+                  borderBottom: noticeTab === 'history' ? '2px solid #34d399' : 'none',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer' 
+                }}
+              >
+                SERVICE HISTORY
+              </button>
+              <button 
+                onClick={() => setNoticeTab('lore')}
+                style={{ 
+                  padding: '10px 16px', 
+                  background: 'transparent', 
+                  color: noticeTab === 'lore' ? '#94a3b8' : 'rgba(148, 163, 184, 0.6)', 
+                  border: 'none', 
+                  borderBottom: noticeTab === 'lore' ? '2px solid #94a3b8' : 'none',
+                  fontSize: 12, fontWeight: 700, cursor: 'pointer' 
+                }}
+              >
+                CREW NOTICES
+              </button>
             </div>
+
+            {noticeTab === 'open' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+                {contracts.filter(c => !c.isCompleted).length === 0 ? (
+                  <div style={{ padding: 30, textAlign: 'center', color: 'rgba(148, 163, 184, 0.5)', fontSize: 13 }}>
+                    No active warrants available. All sectors secured.
+                  </div>
+                ) : (
+                  contracts.filter(c => !c.isCompleted).map(contract => {
+                    const unlocked = isContractUnlocked(contract.title, completedContractCount);
+                    const isActive = activeContractId === contract.id;
+                    
+                    return (
+                      <div
+                        key={contract.id}
+                        style={{
+                          background: isActive ? 'rgba(56, 189, 248, 0.08)' : 'rgba(30, 41, 59, 0.4)',
+                          border: `1px solid ${isActive ? 'rgba(56, 189, 248, 0.4)' : unlocked ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)'}`,
+                          borderRadius: 12,
+                          padding: 20,
+                          textAlign: 'left',
+                          transition: 'all 0.2s ease',
+                          opacity: unlocked ? 1 : 0.5,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: unlocked ? '#f8fafc' : '#94a3b8' }}>
+                            {contract.title}
+                          </h3>
+                          <div style={{ fontSize: 14, color: '#fde68a', fontFamily: fontMono, fontWeight: 600 }}>
+                            ¤ {contract.reward.toLocaleString()}
+                          </div>
+                        </div>
+                        
+                        <p style={{ margin: '0 0 16px 0', fontSize: 12, color: 'rgba(148, 163, 184, 0.9)', lineHeight: 1.5 }}>
+                          {contract.description}
+                        </p>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ fontSize: 10, letterSpacing: '0.08em', fontWeight: 700, color: 'rgba(148, 163, 184, 0.6)', textTransform: 'uppercase' }}>
+                            Target: {getContractDeployZone(contract.title)?.replace('_', ' ') || 'Classified'}
+                          </div>
+                          
+                          {isActive ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#38bdf8', fontSize: 11, fontWeight: 700, animation: 'pulse 1.5s infinite alternate' }}>
+                              <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#38bdf8', boxShadow: '0 0 10px #38bdf8' }} />
+                              ACCEPTED WARRANT
+                            </div>
+                          ) : unlocked ? (
+                            <button
+                              onClick={async () => {
+                                await db.contracts.toCollection().modify({ isActive: false });
+                                await db.contracts.update(contract.id!, { isActive: true });
+                                await refreshDbToState();
+                                setToast(`Warrant accepted: ${contract.title}`);
+                                setNoticeOpen(false);
+                              }}
+                              style={{
+                                padding: '8px 20px',
+                                background: '#0ea5e9',
+                                color: '#fff',
+                                border: 'none',
+                                borderRadius: 6,
+                                fontSize: 12,
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                boxShadow: '0 4px 12px rgba(14, 165, 233, 0.25)',
+                              }}
+                            >
+                              ACCEPT CONTRACT
+                            </button>
+                          ) : (
+                            <div style={{ fontSize: 11, color: 'rgba(148, 163, 184, 0.5)', fontStyle: 'italic' }}>
+                              LOCKED: Complete {getContractUnlockRequirement(contract.title)} missions
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+
+            {noticeTab === 'history' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+                {contracts.filter(c => c.isCompleted).length === 0 ? (
+                  <div style={{ padding: 30, textAlign: 'center', color: 'rgba(148, 163, 184, 0.5)', fontSize: 13 }}>
+                    No service records found. Complete missions to build your history.
+                  </div>
+                ) : (
+                  contracts.filter(c => c.isCompleted).map(contract => (
+                    <div
+                      key={contract.id}
+                      style={{
+                        background: 'rgba(20, 35, 30, 0.6)',
+                        border: '1px solid rgba(52, 211, 153, 0.15)',
+                        borderRadius: 10,
+                        padding: '14px 18px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center'
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: '#f8fafc' }}>{contract.title}</div>
+                        <div style={{ fontSize: 10, color: '#34d399', fontWeight: 600, letterSpacing: '0.05em', marginTop: 4 }}>WARRANT CLEARED</div>
+                      </div>
+                      <div style={{ fontSize: 13, color: 'rgba(148, 163, 184, 0.8)', fontFamily: fontMono }}>
+                        +¤ {contract.reward.toLocaleString()}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {noticeTab === 'lore' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+                {[
+                  { tag: '⚠ SHIP NOTICE', text: 'Cargo bay pressurization drill 0300 ship-time. All crew must muster in the aft cross-corridor. Report anomalies to the bridge.' },
+                  { tag: '─ MARTA\'S SURPLUS', text: 'Restocked after the last run. Medkits, bandages, and 9×mm fresh from station logistics. No returns on firearms. — M.R.' },
+                  { tag: '⚠ SECURITY ADVISORY', text: 'Airlock Alpha authorisation is restricted to command biometrics during active contracts. Tampering is a felony under Frontier Charter Article 18.' },
+                  { tag: '─ CREW NOTICE', text: 'Coffee machine in the aft mess is broken again. Anyone with a spare 12-mm fuse strip, see Hendrix. — Engineering' },
+                  { tag: '▶ FREIGHT MANIFEST', text: 'ICV Relentless, Meridian-class. Bound: Frontier Station Delta-9. Cargo: medical surplus (declared), survey equipment (restricted). Return ETA: OPEN.' },
+                  { tag: '─ SGT. HENDRIX', text: 'Anyone messes with the weapon racks without a sign-out form is on cleanup duty for a month. You know who you are.' },
+                ].map(({ tag, text }, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      padding: '12px 16px',
+                      background: 'rgba(20, 28, 40, 0.72)',
+                      border: '1px solid rgba(255,255,255,0.07)',
+                      borderRadius: 8,
+                      textAlign: 'left',
+                    }}
+                  >
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: 'rgba(163, 230, 180, 0.85)', marginBottom: 4, fontFamily: fontMono }}>{tag}</div>
+                    <div style={{ fontSize: 12, lineHeight: 1.55, color: 'rgba(200, 212, 228, 0.9)' }}>{text}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={{ textAlign: 'center' }}>
               <button
                 type="button"
@@ -1711,13 +2224,122 @@ const App: React.FC<AppProps> = ({ game }) => {
                   border: '1px solid rgba(255,255,255,0.12)',
                   borderRadius: 8,
                   letterSpacing: '0.05em',
+                  width: '100%',
                 }}
               >
-                Close
+                CLOSE BOARD
               </button>
             </div>
           </div>
         </>
+      )}
+
+      {/* ── DEPLOYMENT OVERLAY ────────────────────────────────────────────── */}
+      {isDeploying && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 200,
+            background: '#020617',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+            pointerEvents: 'auto'
+          }}
+        >
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'repeating-linear-gradient(0deg, rgba(255,255,255,0.03) 0px, transparent 1px, transparent 2px)',
+            backgroundSize: '100% 3px',
+            pointerEvents: 'none'
+          }} />
+          
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '2px',
+            background: 'linear-gradient(90deg, transparent, rgba(56,189,248,0.4), transparent)',
+            boxShadow: '0 0 15px rgba(56,189,248,0.3)',
+            animation: 'scan-sweep 2s linear infinite'
+          }} />
+          
+          <div style={{ 
+            fontSize: 10, 
+            letterSpacing: '0.5em', 
+            color: '#38bdf8', 
+            marginBottom: 20, 
+            fontWeight: 700,
+            animation: 'pulse 0.5s infinite alternate' 
+          }}>
+            TRANSIT IN PROGRESS
+          </div>
+          
+          <h2 style={{ 
+            margin: 0, 
+            fontSize: 'clamp(2rem, 5vw, 3.5rem)', 
+            fontWeight: 900, 
+            letterSpacing: '-0.02em',
+            color: '#f8fafc',
+            textAlign: 'center'
+          }}>
+            DEPLOYING TO <span style={{ color: '#0ea5e9' }}>{
+              gameState === GameState.STATION ? 'STATION DELTA-9' : 
+              gameState === GameState.PLANET ? 'PLANET OUTPOST' : 
+              'CLASSIFIED ZONE'
+            }</span>
+          </h2>
+
+          {activeRaidContract && (
+            <div style={{ 
+              marginTop: 24, 
+              padding: '12px 20px', 
+              background: 'rgba(56, 189, 248, 0.05)', 
+              border: '1px solid rgba(56, 189, 248, 0.2)', 
+              borderRadius: 8,
+              maxWidth: 480,
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: 10, color: '#38bdf8', fontWeight: 700, letterSpacing: '0.2em', marginBottom: 6 }}>MISSION BRIEFING</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', marginBottom: 8 }}>{activeRaidContract.title}</div>
+              <div style={{ fontSize: 12, color: 'rgba(148, 163, 184, 0.85)', lineHeight: 1.5 }}>{activeRaidContract.description}</div>
+            </div>
+          )}
+          
+          <div style={{ 
+            marginTop: 40, 
+            width: 300, 
+            height: 2, 
+            background: 'rgba(255,255,255,0.1)', 
+            position: 'relative' 
+          }}>
+            <div style={{ 
+              position: 'absolute', 
+              height: '100%', 
+              width: '100%', 
+              background: '#0ea5e9', 
+              boxShadow: '0 0 15px #0ea5e9',
+              transformOrigin: 'left',
+              animation: 'deploy-progress 1.6s ease-in-out forwards' 
+            }} />
+          </div>
+
+          <div style={{ 
+            position: 'absolute', 
+            bottom: 60, 
+            fontSize: 11, 
+            fontFamily: fontMono, 
+            color: 'rgba(148, 163, 184, 0.5)',
+            textAlign: 'center'
+          }}>
+            POD_UUID: {Math.random().toString(16).substring(2, 10).toUpperCase()} · VELOCITY: 4,820 M/S · SHIELD_STRUCT: NOMINAL
+          </div>
+        </div>
       )}
     </div>
   );

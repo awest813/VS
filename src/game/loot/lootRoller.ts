@@ -1,4 +1,4 @@
-import { PRIMARY_WEAPON_ITEM_IDS } from '../weapons/weaponDefinitions';
+import { PRIMARY_WEAPON_ITEM_IDS, type PrimaryWeaponItemId } from '../weapons/weaponDefinitions';
 import type { RaidLootGrant, WeightedRaidLootEntry, WeightedRaidLootTable } from './lootTypes';
 
 export function randomIntInclusive(min: number, max: number, rnd: () => number = Math.random): number {
@@ -26,14 +26,40 @@ export function pickWeightedRaidEntry(entries: WeightedRaidLootEntry[], rnd: () 
 }
 
 function rollPrimaryWeaponGrant(rnd: () => number): RaidLootGrant {
-  const ix = Math.floor(rnd() * PRIMARY_WEAPON_ITEM_IDS.length);
-  const itemId = PRIMARY_WEAPON_ITEM_IDS[Math.min(ix, PRIMARY_WEAPON_ITEM_IDS.length - 1)]!;
+  // Define weights for primary weapons to balance rarity
+  const weaponWeights: { id: PrimaryWeaponItemId; weight: number }[] = [
+    { id: 'rifle_01', weight: 100 },
+    { id: 'shotgun_01', weight: 80 },
+    { id: 'smg_flechette', weight: 80 },
+    { id: 'pistol_std', weight: 70 },
+    { id: 'pulse_compact', weight: 60 },
+    { id: 'carbine_mk2', weight: 50 },
+    { id: 'revolver_454', weight: 50 },
+    { id: 'pulse_rifle', weight: 40 },
+    { id: 'slug_cannon', weight: 20 },
+    { id: 'void_disruptor', weight: 10 },
+    { id: 'thermal_lance', weight: 5 },
+  ];
+
+  const totalWeight = weaponWeights.reduce((sum, w) => sum + w.weight, 0);
+  const roll = rnd() * totalWeight;
+  let current = 0;
+  let itemId: PrimaryWeaponItemId = 'rifle_01';
+
+  for (const w of weaponWeights) {
+    current += w.weight;
+    if (roll < current) {
+      itemId = w.id;
+      break;
+    }
+  }
+
   return {
     itemId,
     quantity: 1,
     stats: {
-      damageMod: 0.8 + rnd() * 0.4,
-      fireRateMod: 0.8 + rnd() * 0.4,
+      damageMod: 0.85 + rnd() * 0.35,
+      fireRateMod: 0.9 + rnd() * 0.25,
     },
   };
 }

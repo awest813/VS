@@ -48,8 +48,24 @@ export function flashlightOutputIntensity(opts: {
 }): number {
   const { flashlightOn, battery, maxBattery, shipHub } = opts;
   if (!flashlightOn || battery <= 0 || maxBattery <= 0) return 0;
+  
   const frac = Math.max(0, Math.min(1, battery / maxBattery));
   let v = frac * doom3HandLight.intensityAtFullBattery;
+  
+  // Flickering effect when battery is below 10%
+  if (frac < 0.1 && !shipHub) {
+    const flickerFreq = 15; // Hz
+    const flickerChance = 0.45;
+    const now = Date.now() / 1000;
+    // Pseudorandom flicker based on time
+    const t = Math.sin(now * flickerFreq * Math.PI * 2);
+    if (t < -1 + flickerChance * 2) {
+      v *= 0.15; // Severe dip
+    } else if (t < 0) {
+      v *= 0.65; // Moderate dip
+    }
+  }
+
   if (shipHub) v *= doom3HandLight.shipIntensityMultiplier;
   return v;
 }

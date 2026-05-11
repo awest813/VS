@@ -10,6 +10,7 @@ import {
   Color3,
   PBRMaterial,
 } from '@babylonjs/core';
+import PBRMaterialFactory, { PBREnum } from '../PBRMaterialFactory';
 import { Game } from '../Game';
 import { PlayerController } from '../player/PlayerController';
 import { GameState } from '../StateMachine';
@@ -19,7 +20,6 @@ import { EnemyAI } from '../ai/EnemyAI';
 import { placeBabylonModel } from '../loaders/BabylonHostedDecor';
 import { BABYLON_ENV_SPECULAR } from '../loaders/BabylonAssetUrls';
 import { applyBabylonIBL } from '../loaders/applyBabylonIBL';
-import { createIndustrialBump, makePbrMetalPanel } from '../loaders/IndustrialMaterials';
 import { doom3FacilityAmbient } from '../level/idTech4Inspired';
 import { STATION_CRATE_SPAWNS, STATION_ENEMY_SPAWNS } from '../level/stationDefs';
 import { environmentalSurgeActiveAt } from '../raid/raidEnvironment';
@@ -49,9 +49,9 @@ export class StationScene {
       scene.enablePhysics(new Vector3(0, -9.81, 0), this.game.havokPlugin);
     }
 
-    const bump = createIndustrialBump(scene, 'stationPanelBump', 5);
-    const floorMat = makePbrMetalPanel(scene, 'statFloorMat', new Color3(0.38, 0.4, 0.46), bump, 0.55, 0.72);
-    const wallMat = makePbrMetalPanel(scene, 'statWallMat', new Color3(0.62, 0.64, 0.72), bump, 0.48, 0.62);
+    const pbrFactory = new PBRMaterialFactory(scene);
+    const floorMat = pbrFactory.create(PBREnum.Metal_Plate_41, { uScale: 4, vScale: 8, pScale: 0.05 });
+    const wallMat = pbrFactory.create(PBREnum.Metal_Plate_15, { uScale: 4, vScale: 2, pScale: 0.03 });
 
     const elevatorMat = new PBRMaterial('elevatorMat', scene);
     elevatorMat.albedoColor = new Color3(0.45, 0.22, 0.06);
@@ -157,6 +157,22 @@ export class StationScene {
       });
     }
 
+    const terminal = MeshBuilder.CreateBox('NetworkTerminal', { width: 1.2, height: 1.8, depth: 0.3 }, scene);
+    terminal.position.set(4.5, 1.2, 8);
+    const terminalMat = new PBRMaterial('terminalMat', scene);
+    terminalMat.albedoColor = new Color3(0.1, 0.15, 0.2);
+    terminalMat.emissiveColor = new Color3(0, 0.2, 0.4);
+    terminal.material = terminalMat;
+    terminal.metadata = {
+      hudLabel: 'Relay terminal',
+      onInteract: () => {
+        if (this.game.terminalsHacked === 0) {
+          this.game.terminalsHacked++;
+          window.dispatchEvent(new CustomEvent('raidLorePing', { detail: { segmentId: 'terminal_online' } }));
+        }
+      }
+    };
+
     // Loot containers scattered through the corridor
     const crateMat = new PBRMaterial('statCrateMat', scene);
     crateMat.albedoColor = new Color3(0.3, 0.34, 0.38);
@@ -198,15 +214,25 @@ export class StationScene {
     this.game.player = player;
 
     scene.onBeforeRenderObservable.add(() => {
-      const surge = environmentalSurgeActiveAt(Date.now());
+      const now = Date.now();
+      const surge = environmentalSurgeActiveAt(now);
       this.game.raidEnvironmentalSurge = surge;
-      ambient.intensity = baseAmbientIntensity * (surge ? 0.45 : 1);
-      rimCool.intensity = rimCoolBaseIntensity * (surge ? 0.52 : 1);
-      const pulse = Math.sin(Date.now() / 200) > 0 ? redLightPulseHigh : redLightPulseLow;
-      redLight.intensity = pulse * (surge ? 0.62 : 1);
+      
+      let intensityMul = 1;
+      if (surge) {
+        // Aggressive flickering during surge
+        const flicker = Math.sin(now / 40) * Math.cos(now / 75);
+        intensityMul = flicker > 0.2 ? 0.45 : flicker > -0.4 ? 0.15 : 0.02;
+      }
+
+      ambient.intensity = baseAmbientIntensity * intensityMul;
+      rimCool.intensity = rimCoolBaseIntensity * (surge ? intensityMul * 0.8 : 1);
+      
+      const pulse = Math.sin(now / 200) > 0 ? redLightPulseHigh : redLightPulseLow;
+      redLight.intensity = pulse * (surge ? intensityMul * 1.5 : 1);
     });
 
-    await Promise.all([
+    Promise.all([
       placeBabylonModel(scene, 'ExplodingBarrel.glb', {
         position: new Vector3(6.2, 0.45, -4),
         scale: 0.42,
@@ -225,7 +251,7 @@ export class StationScene {
         scale: 0.04,
         rotationY: -0.5,
       }),
-      placeBabylonModel(scene, 'marble.gltf', {
+      placeBabylonModel(scene, 'marble.glb', {
         position: new Vector3(5.95, 0.82, -2),
         scale: 0.38,
         rotationY: 0.55,
@@ -251,7 +277,8 @@ export class StationScene {
         const inventory = mergeAmmoForShipExtract(
           [...this.game.player.inventory],
           weapon?.currentAmmo ?? 0,
-          weapon?.reserveAmmo ?? 0
+          weapon?.reserveAmmo ?? 0,
+          weapon?.weaponArchetype.ammoItemId
         );
 
         void (async () => {
@@ -259,6 +286,7 @@ export class StationScene {
             const result = await persistStationRaidExtract({
               inventory,
               stationKillsSinceDock: this.game.enemiesKilledStation,
+              game: this.game,
             });
             console.log('Inventory saved to stash!');
             window.dispatchEvent(

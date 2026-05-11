@@ -17,7 +17,7 @@ export const hud = {
     backdropFilter: 'blur(14px)',
   }),
   /** Small-caps rails (SHIP HUB, ACTIVE CONTRACT, weapon strip, OPS header). */
-  sectionEyebrow: (tone: 'hub' | 'contract' | 'cool' | 'ops'): CSSProperties => {
+  sectionEyebrow: (tone: 'hub' | 'contract' | 'cool' | 'ops' | 'suit'): CSSProperties => {
     const color =
       tone === 'hub'
         ? 'rgba(150, 185, 220, 0.55)'
@@ -25,6 +25,8 @@ export const hud = {
           ? 'rgba(180, 200, 240, 0.55)'
           : tone === 'cool'
             ? 'rgba(160, 200, 255, 0.55)'
+            : tone === 'suit'
+            ? 'rgba(148, 163, 184, 0.55)'
             : 'rgba(150, 180, 215, 0.55)';
     return {
       fontSize: 11,
