@@ -3,7 +3,7 @@ import { Game } from '../Game';
 import { WeaponController } from './WeaponController';
 import { db } from '../persistence/SaveDB';
 import { GameState } from '../StateMachine';
-import { isInteractableTarget } from '../hub/interactionRay';
+import { isInteractableTarget, resolveInteractableTarget } from '../hub/interactionRay';
 import { isPrimaryWeaponItemId } from '../weapons/weaponDefinitions';
 import { doom3HandLight, flashlightOutputIntensity } from '../level/idTech4Inspired';
 import {
@@ -422,17 +422,18 @@ export class PlayerController {
     const ray = this.camera.getForwardRay(interactionReach);
     const pick = this.scene.pickWithRay(ray, (m) => isInteractableTarget(m));
     const hit = pick?.pickedMesh ?? null;
+    const interactable = resolveInteractableTarget(hit);
 
-    if (pick?.hit && isInteractableTarget(hit)) {
+    if (pick?.hit && interactable) {
       const hud =
-        typeof hit.metadata?.hudLabel === 'string' ? hit.metadata.hudLabel : hit.name;
+        typeof interactable.metadata?.hudLabel === 'string' ? interactable.metadata.hudLabel : interactable.name;
       this.hoveredInteractable = hud;
       if (this.inputMap['KeyE']) {
-        console.log('Interacted with:', hit.name);
+        console.log('Interacted with:', interactable.name);
         this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeInteract);
         this.uiBlipSound.setPlaybackRate(AudioMix.uiBlipRateInteract + Math.random() * 0.06);
         this.uiBlipSound.play();
-        (hit.metadata.onInteract as () => void)();
+        (interactable.metadata?.onInteract as () => void)();
         this.inputMap['KeyE'] = false;
       }
     } else {
