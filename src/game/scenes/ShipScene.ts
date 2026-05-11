@@ -528,6 +528,38 @@ export class ShipScene {
         scale: 0.022,
         rotationY: Math.PI * 0.6,
       }),
+      // Supply post details
+      placeBabylonModel(scene, 'clothFolds.glb', {
+        position: new Vector3(8.3, 1.08, -3.75),
+        scale: 0.08,
+        rotationY: -0.35,
+      }),
+      placeBabylonModel(scene, 'shaderBall.glb', {
+        position: new Vector3(7.4, 1.12, -3.8),
+        scale: 0.06,
+        rotationY: 0.7,
+      }),
+      // Quartermaster desk details
+      placeBabylonModel(scene, 'shaderBall.glb', {
+        position: new Vector3(-12.6, 1.12, -28.25),
+        scale: 0.055,
+        rotationY: -0.9,
+      }),
+      placeBabylonModel(scene, 'BabylonShaderBall_Simple.gltf', {
+        position: new Vector3(-13.4, 1.1, -28.1),
+        scale: 0.036,
+        rotationY: 0.35,
+      }),
+      // Crew space details
+      placeBabylonModel(scene, 'emoji_heart.glb', {
+        position: new Vector3(-5.0, 2.95, -9.72),
+        scale: 0.03,
+        rotationY: Math.PI,
+      }),
+      placeBabylonModel(scene, 'marble.gltf', {
+        position: new Vector3(5.8, 1.02, -16.0),
+        scale: 0.18,
+      }),
     ]);
 
     return scene;
