@@ -10,4 +10,8 @@ describe('uiTokens', () => {
     expect(humanizeHudTarget('__airlock___alpha__')).toBe('Airlock Alpha');
     expect(humanizeHudTarget('  survey___drive  ')).toBe('Survey Drive');
   });
+
+  it('humanizeHudTarget returns empty for delimiter-only slugs', () => {
+    expect(humanizeHudTarget('___')).toBe('');
+  });
 });
