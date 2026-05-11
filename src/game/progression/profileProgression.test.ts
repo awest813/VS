@@ -17,6 +17,7 @@ describe('profileProgression', () => {
       weaponHandlingTier: 0,
       armorPlatingTier: 0,
       servoAssistTier: 1,
+      batteryPackTier: 0,
     });
   });
 
@@ -31,11 +32,12 @@ describe('profileProgression', () => {
         ...DEFAULT_UPGRADE_STATE,
         armorPlatingTier: 2,
         servoAssistTier: 1,
+        batteryPackTier: 1,
       })
     ).toEqual({
       maxHealth: 150,
       maxStamina: 115,
-      maxBattery: 100,
+      maxBattery: 125,
     });
   });
 
