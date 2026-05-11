@@ -70,6 +70,8 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [stamina, setStamina] = useState({ current: 100, max: 100 });
   const [environmentalSurge, setEnvironmentalSurge] = useState(false);
   const [loreTerminalText, setLoreTerminalText] = useState<string | null>(null);
+  const [openMerchantId, setOpenMerchantId] = useState<string | null>(null);
+  const [noticeOpen, setNoticeOpen] = useState(false);
 
   const shipOpsDialogRef = useRef<HTMLDivElement>(null);
 
@@ -129,6 +131,15 @@ const App: React.FC<AppProps> = ({ game }) => {
     };
     window.addEventListener('toggleShipUI', toggleUI);
 
+    const onOpenMerchant = (e: Event) => {
+      const ce = e as CustomEvent<{ merchantId?: string }>;
+      if (ce.detail?.merchantId) setOpenMerchantId(ce.detail.merchantId);
+    };
+    window.addEventListener('openMerchant', onOpenMerchant as EventListener);
+
+    const onShowNotice = () => setNoticeOpen(true);
+    window.addEventListener('showCrewNotice', onShowNotice);
+
     const onLockChange = () => {
       setPointerLocked(!!document.pointerLockElement);
     };
@@ -138,6 +149,8 @@ const App: React.FC<AppProps> = ({ game }) => {
       cleanup();
       clearInterval(interval);
       window.removeEventListener('toggleShipUI', toggleUI);
+      window.removeEventListener('openMerchant', onOpenMerchant as EventListener);
+      window.removeEventListener('showCrewNotice', onShowNotice);
       document.removeEventListener('pointerlockchange', onLockChange);
     };
   }, [game, refreshDbToState]);
@@ -220,6 +233,19 @@ const App: React.FC<AppProps> = ({ game }) => {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isShipUIOpen, game]);
+
+  useEffect(() => {
+    if (!openMerchantId && !noticeOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpenMerchantId(null);
+        setNoticeOpen(false);
+        game.canvas?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openMerchantId, noticeOpen, game]);
 
   useEffect(() => {
     if (!isShipUIOpen) return;
@@ -331,7 +357,9 @@ const App: React.FC<AppProps> = ({ game }) => {
 
   const inFirstPerson =
     (gameState === GameState.SHIP || gameState === GameState.STATION || gameState === GameState.MOON_BASE || gameState === GameState.PLANET) &&
-    !isShipUIOpen;
+    !isShipUIOpen &&
+    openMerchantId === null &&
+    !noticeOpen;
   const showPointerHint = inFirstPerson && !pointerLocked;
   const healthPct = health.max > 0 ? Math.min(100, (health.current / health.max) * 100) : 0;
   const batteryPct = battery.max > 0 ? Math.min(100, (battery.current / battery.max) * 100) : 0;
@@ -1252,6 +1280,217 @@ const App: React.FC<AppProps> = ({ game }) => {
             </div>
           </div>
         </div>
+        </>
+      )}
+
+      {/* ── MERCHANT PANEL ─────────────────────────────────────────────────── */}
+      {gameState === GameState.SHIP && openMerchantId !== null && (() => {
+        const isSP   = openMerchantId === 'supply_post';
+        const isQM   = openMerchantId === 'quartermaster';
+        const title  = isSP ? "Marta's Surplus" : isQM ? 'Quartermaster — Sgt. Hendrix' : 'Merchant';
+        const flavor = isSP
+          ? "Fresh from the last supply run. Don't ask where I sourced these."
+          : isQM
+          ? "I keep the armory stocked. You keep coming back alive. Deal?"
+          : '';
+        const items: { id: string; name: string; cost: number; qty?: number }[] = isSP
+          ? [
+              { id: 'ammo_9mm', name: 'Ammo ×30',   cost: 20, qty: 30 },
+              { id: 'medkit',   name: 'Medkit',      cost: 50 },
+              { id: 'bandage',  name: 'Bandage ×3',  cost: 25, qty: 3  },
+            ]
+          : isQM
+          ? [
+              ...ARMORY_PRIMARY_OFFERS.map((o) => ({
+                id:   o.itemId,
+                name: getLootDefinition(o.itemId)?.name ?? o.itemId,
+                cost: o.credits,
+              })),
+              { id: 'ammo_9mm', name: 'Ammo ×30',  cost: 20, qty: 30 },
+              { id: 'medkit',   name: 'Medkit',     cost: 50 },
+              { id: 'bandage',  name: 'Bandage ×3', cost: 25, qty: 3  },
+            ]
+          : [];
+
+        return (
+          <>
+            <div
+              aria-hidden
+              onClick={() => setOpenMerchantId(null)}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 30,
+                background: 'rgba(2, 6, 14, 0.78)',
+                backdropFilter: 'blur(6px)',
+                pointerEvents: 'auto',
+              }}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={title}
+              style={{
+                position: 'absolute',
+                top: 'max(24px, env(safe-area-inset-top))',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                pointerEvents: 'auto',
+                zIndex: 31,
+                ...panelBase,
+                padding: 'clamp(24px, 3.5vw, 36px)',
+                width: 'min(520px, calc(100vw - max(48px, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))))',
+                maxHeight: 'min(580px, calc(100vh - max(48px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))))',
+                overflowY: 'auto',
+                textAlign: 'center',
+              }}
+            >
+              <p style={{ margin: '0 0 4px 0', ...hud.sectionEyebrow('ops') }}>MERCHANT</p>
+              <h1 style={{ margin: '0 0 8px 0', fontSize: 'clamp(1.15rem, 2.2vw, 1.55rem)', fontWeight: 700 }}>{title}</h1>
+              {flavor && (
+                <p style={{ margin: '0 0 14px 0', fontSize: 12, color: 'rgba(160, 175, 200, 0.82)', fontStyle: 'italic' }}>
+                  "{flavor}"
+                </p>
+              )}
+              <h2 style={{ color: '#fde68a', margin: '0 0 18px 0', fontSize: 'clamp(1rem, 1.8vw, 1.2rem)', fontFamily: fontMono, fontWeight: 550 }}>¤ {money.toLocaleString()}</h2>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+                {items.map((item) => (
+                  <div
+                    key={item.id}
+                    tabIndex={money >= item.cost ? 0 : -1}
+                    role="button"
+                    className={money >= item.cost ? 'ui-card-interactive' : undefined}
+                    onKeyDown={(e) => {
+                      if (money < item.cost) return;
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        void buyItem(item.id, item.cost, item.qty ?? 1);
+                      }
+                    }}
+                    onClick={() => { if (money >= item.cost) void buyItem(item.id, item.cost, item.qty ?? 1); }}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      background: 'rgba(50, 32, 20, 0.68)',
+                      padding: '10px 14px',
+                      border: `1px solid ${money >= item.cost ? 'rgba(253, 186, 116, 0.3)' : 'rgba(253, 186, 116, 0.1)'}`,
+                      borderRadius: 8,
+                      cursor: money >= item.cost ? 'pointer' : 'not-allowed',
+                      opacity: money >= item.cost ? 1 : 0.46,
+                      textAlign: 'left',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+                    <div style={{ fontSize: 12, color: '#fde68a', fontFamily: fontMono, flexShrink: 0, marginLeft: 12 }}>¤ {item.cost}</div>
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenMerchantId(null)}
+                style={{
+                  padding: '11px 26px',
+                  fontSize: 14,
+                  fontFamily: fontUi,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: 'rgba(55, 60, 72, 0.95)',
+                  color: '#e8edf5',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 8,
+                  letterSpacing: '0.05em',
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* ── CREW NOTICE BOARD ──────────────────────────────────────────────── */}
+      {gameState === GameState.SHIP && noticeOpen && (
+        <>
+          <div
+            aria-hidden
+            onClick={() => setNoticeOpen(false)}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              zIndex: 30,
+              background: 'rgba(2, 6, 14, 0.78)',
+              backdropFilter: 'blur(6px)',
+              pointerEvents: 'auto',
+            }}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Crew Notice Board"
+            style={{
+              position: 'absolute',
+              top: 'max(24px, env(safe-area-inset-top))',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              pointerEvents: 'auto',
+              zIndex: 31,
+              ...panelBase,
+              padding: 'clamp(24px, 3.5vw, 36px)',
+              width: 'min(560px, calc(100vw - max(48px, env(safe-area-inset-left, 0px) + env(safe-area-inset-right, 0px))))',
+              maxHeight: 'min(580px, calc(100vh - max(48px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))))',
+              overflowY: 'auto',
+            }}
+          >
+            <p style={{ margin: '0 0 4px 0', ...hud.sectionEyebrow('ops') }}>SHIP BULLETIN BOARD</p>
+            <h1 style={{ margin: '0 0 18px 0', fontSize: 'clamp(1.1rem, 2vw, 1.45rem)', fontWeight: 700, textAlign: 'center' }}>
+              ICV Relentless — Crew Notices
+            </h1>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 20 }}>
+              {[
+                { tag: '⚠ SHIP NOTICE', text: 'Cargo bay pressurization drill 0300 ship-time. All crew must muster in the aft cross-corridor. Report anomalies to the bridge.' },
+                { tag: '─ MARTA\'S SURPLUS', text: 'Restocked after the last run. Medkits, bandages, and 9×mm fresh from station logistics. No returns on firearms. — M.R.' },
+                { tag: '⚠ SECURITY ADVISORY', text: 'Airlock Alpha authorisation is restricted to command biometrics during active contracts. Tampering is a felony under Frontier Charter Article 18.' },
+                { tag: '─ CREW NOTICE', text: 'Coffee machine in the aft mess is broken again. Anyone with a spare 12-mm fuse strip, see Hendrix. — Engineering' },
+                { tag: '▶ FREIGHT MANIFEST', text: 'ICV Relentless, Meridian-class. Bound: Frontier Station Delta-9. Cargo: medical surplus (declared), survey equipment (restricted). Return ETA: OPEN.' },
+                { tag: '─ SGT. HENDRIX', text: 'Anyone messes with the weapon racks without a sign-out form is on cleanup duty for a month. You know who you are.' },
+              ].map(({ tag, text }, i) => (
+                <div
+                  key={i}
+                  style={{
+                    padding: '10px 14px',
+                    background: 'rgba(20, 28, 40, 0.72)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    borderRadius: 8,
+                    textAlign: 'left',
+                  }}
+                >
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: 'rgba(163, 230, 180, 0.85)', marginBottom: 4, fontFamily: fontMono }}>{tag}</div>
+                  <div style={{ fontSize: 12, lineHeight: 1.55, color: 'rgba(200, 212, 228, 0.9)' }}>{text}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ textAlign: 'center' }}>
+              <button
+                type="button"
+                onClick={() => setNoticeOpen(false)}
+                style={{
+                  padding: '11px 26px',
+                  fontSize: 14,
+                  fontFamily: fontUi,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  background: 'rgba(55, 60, 72, 0.95)',
+                  color: '#e8edf5',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: 8,
+                  letterSpacing: '0.05em',
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </>
       )}
     </div>
