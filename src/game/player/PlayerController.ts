@@ -6,6 +6,7 @@ import { GameState } from '../StateMachine';
 import { isInteractableTarget, resolveInteractableTarget } from '../hub/interactionRay';
 import { isPrimaryWeaponItemId } from '../weapons/weaponDefinitions';
 import { doom3HandLight, flashlightOutputIntensity } from '../level/idTech4Inspired';
+import { applyArmorUpgradeBonuses, combineWeaponUpgradeMods, normalizeUpgradeState } from '../progression/profileProgression';
 import {
   RAID_GADGET_COOLDOWN_MS,
   RAID_GADGET_SLOW_DURATION_MS,
@@ -136,6 +137,8 @@ export class PlayerController {
 
   private async loadLoadout() {
     const loadoutItems = await db.stashItems.where('slot').equals('loadout').toArray();
+    const profile = await db.playerProfile.toCollection().first();
+    const upgradeState = normalizeUpgradeState(profile);
     let equippedWeapon = 'rifle_01'; // Default
     let equippedStats: any = null;
 
@@ -163,7 +166,21 @@ export class PlayerController {
       }
     }
 
-    this.weapon = new WeaponController(this.game, this.scene, this.camera, equippedWeapon, equippedStats);
+    const armorStats = applyArmorUpgradeBonuses(upgradeState);
+    this.maxHealth = armorStats.maxHealth;
+    this.health = armorStats.maxHealth;
+    this.maxStamina = armorStats.maxStamina;
+    this.stamina = armorStats.maxStamina;
+    this.maxBattery = armorStats.maxBattery;
+    this.battery = armorStats.maxBattery;
+
+    this.weapon = new WeaponController(
+      this.game,
+      this.scene,
+      this.camera,
+      equippedWeapon,
+      combineWeaponUpgradeMods(equippedStats, upgradeState)
+    );
 
     if (staging) {
       for (const item of loadoutItems) {

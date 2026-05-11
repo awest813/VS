@@ -4,18 +4,28 @@ import { RAID_MEDKIT_COOLDOWN_MS, RAID_BANDAGE_COOLDOWN_MS } from './game/player
 import { RAID_GADGET_COOLDOWN_MS } from './game/raid/raidGadget';
 import { RAID_LORE_BY_SEGMENT } from './game/level/raidLoreTerminals';
 import { GameState } from './game/StateMachine';
-import { db, StashItem, Contract } from './game/persistence/SaveDB';
+import { db, StashItem, type Contract, type PlayerProfile } from './game/persistence/SaveDB';
 import {
   getContractRaidHint,
   contractProgressSummary,
   hubDockingAllowed,
   getContractDeployZone,
+  getContractUnlockRequirement,
+  isContractUnlocked,
 } from './game/contracts/contractRules';
 import { ARMORY_PRIMARY_OFFERS, getWeaponRaidHudHint } from './game/weapons/weaponDefinitions';
 import { getLootDefinition, lootTradeInCredits } from './game/loot/lootDatabase';
 import { lootColorForItemId } from './game/loot/lootUi';
 import { getLoadoutPrimarySwapIds } from './game/hub/loadoutRules';
 import { isPrimaryWeaponItemId } from './game/weapons/weaponDefinitions';
+import {
+  ARMORY_UPGRADE_OFFERS,
+  DEFAULT_UPGRADE_STATE,
+  getUpgradeLevel,
+  isUpgradeUnlocked,
+  normalizeUpgradeState,
+  type UpgradeOffer,
+} from './game/progression/profileProgression';
 import { hud, humanizeHudTarget } from './ui/uiTokens';
 
 const fontUi = hud.fontUi;
@@ -58,6 +68,7 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [hoveredTarget, setHoveredTarget] = useState<string | null>(null);
   const [isShipUIOpen, setIsShipUIOpen] = useState<boolean>(false);
   const [money, setMoney] = useState<number>(0);
+  const [profileUpgrades, setProfileUpgrades] = useState(DEFAULT_UPGRADE_STATE);
   const [health, setHealth] = useState({ current: 100, max: 100 });
   const [battery, setBattery] = useState({ current: 100, max: 100 });
   const [pointerLocked, setPointerLocked] = useState(typeof document !== 'undefined' && !!document.pointerLockElement);
@@ -84,7 +95,13 @@ const App: React.FC<AppProps> = ({ game }) => {
     const active = allContracts.find((c) => c.isActive);
     setActiveContractId(active?.id ?? null);
     const profile = await db.playerProfile.toCollection().first();
-    if (profile) setMoney(profile.money);
+    if (profile) {
+      setMoney(profile.money);
+      setProfileUpgrades(normalizeUpgradeState(profile));
+    } else {
+      setMoney(0);
+      setProfileUpgrades(DEFAULT_UPGRADE_STATE);
+    }
   }, []);
 
   useEffect(() => {
@@ -322,6 +339,50 @@ const App: React.FC<AppProps> = ({ game }) => {
     }
   };
 
+  const buyUpgrade = async (offer: UpgradeOffer, completedContractCount: number) => {
+    if (!isUpgradeUnlocked(completedContractCount, offer)) {
+      setToast(`Locked · clear ${offer.unlockAfterCompleted} contract${offer.unlockAfterCompleted === 1 ? '' : 's'} first.`);
+      return;
+    }
+
+    let outcome = 'missing_profile';
+    let nextLevel = 0;
+
+    await db.transaction('rw', db.playerProfile, async () => {
+      const profile = await db.playerProfile.toCollection().first();
+      if (!profile) return;
+
+      const upgrades = normalizeUpgradeState(profile);
+      const currentLevel = getUpgradeLevel(upgrades, offer.id);
+      if (currentLevel >= offer.maxLevel) {
+        outcome = 'maxed';
+        return;
+      }
+      if (profile.money < offer.cost) {
+        outcome = 'insufficient';
+        return;
+      }
+
+      nextLevel = currentLevel + 1;
+      const patch: Partial<PlayerProfile> = {
+        money: profile.money - offer.cost,
+        [offer.id]: nextLevel,
+      };
+      await db.playerProfile.update(profile.id!, patch);
+      outcome = 'purchased';
+    });
+
+    await refreshDbToState();
+
+    if (outcome === 'purchased') {
+      setToast(`Installed ${offer.label} · Lv ${nextLevel}/${offer.maxLevel}.`);
+    } else if (outcome === 'maxed') {
+      setToast(`${offer.label} already at max level.`);
+    } else if (outcome === 'insufficient') {
+      setToast(`Not enough credits for ${offer.label}.`);
+    }
+  };
+
   const stageItemToLoadout = async (item: StashItem) => {
     if (item.id === undefined) return;
     const itemId = item.id;
@@ -384,8 +445,14 @@ const App: React.FC<AppProps> = ({ game }) => {
     : 'linear-gradient(90deg, #a3e635, #65a30d)';
 
   const completedContracts = contracts.filter((c) => c.isCompleted);
+  const completedContractCount = completedContracts.length;
   const canDockFromHub = hubDockingAllowed(contracts, activeContractId);
   const activeRaidContract = contracts.find((c) => c.isActive && !c.isCompleted);
+  const armoryUpgradeOffers = ARMORY_UPGRADE_OFFERS.map((offer) => {
+    const level = getUpgradeLevel(profileUpgrades, offer.id);
+    const unlocked = isUpgradeUnlocked(completedContractCount, offer);
+    return { ...offer, level, unlocked };
+  });
   // Determine which airlocks are available based on the active contract's zone
   const activeContractDeployZone = activeRaidContract ? getContractDeployZone(activeRaidContract.title) : null;
   const canDockStation = canDockFromHub && activeContractDeployZone !== 'planet';
@@ -1146,7 +1213,7 @@ const App: React.FC<AppProps> = ({ game }) => {
                 CONTRACTS
               </h3>
               <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
-                One mission at a time. Station &amp; moon contracts unlock Airlock Alpha (port); planet contracts unlock Airlock Beta (starboard). Meet objectives on-site, ride green extracts to stash loot; final extraction to the freighter settles payment.
+                One mission at a time. Clear contracts in sequence to unlock harder deployments, new quartermaster tech, and heavier armor refits. Station &amp; moon contracts use Airlock Alpha (port); planet contracts use Airlock Beta (starboard).
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 212, overflowY: 'auto' }}>
                 {contracts.filter((c) => !c.isCompleted).length === 0 && (
@@ -1154,59 +1221,92 @@ const App: React.FC<AppProps> = ({ game }) => {
                 )}
                 {contracts
                   .filter((c) => !c.isCompleted)
-                  .map((contract) => (
-                    <div
-                      key={contract.id}
-                      tabIndex={0}
-                      role="button"
-                      aria-pressed={activeContractId === contract.id}
-                      className="ui-card-interactive"
-                      onKeyDown={async (e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
+                  .map((contract) => {
+                    const unlocked = isContractUnlocked(contract.title, completedContractCount);
+                    const unlockRequirement = getContractUnlockRequirement(contract.title);
+                    return (
+                      <div
+                        key={contract.id}
+                        tabIndex={unlocked ? 0 : -1}
+                        role="button"
+                        aria-pressed={activeContractId === contract.id}
+                        className={unlocked ? 'ui-card-interactive' : undefined}
+                        onKeyDown={async (e) => {
+                          if (!unlocked) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            await db.contracts.toCollection().modify({ isActive: false });
+                            await db.contracts.update(contract.id!, { isActive: true });
+                            await refreshDbToState();
+                          }
+                        }}
+                        onClick={async () => {
+                          if (!unlocked) return;
                           await db.contracts.toCollection().modify({ isActive: false });
                           await db.contracts.update(contract.id!, { isActive: true });
                           await refreshDbToState();
-                        }
-                      }}
-                      onClick={async () => {
-                        await db.contracts.toCollection().modify({ isActive: false });
-                        await db.contracts.update(contract.id!, { isActive: true });
-                        await refreshDbToState();
-                      }}
-                      style={{
-                        background: activeContractId === contract.id ? 'rgba(80, 30, 35, 0.78)' : 'rgba(30, 36, 48, 0.92)',
-                        padding: '12px 14px',
-                        border: `1px solid ${activeContractId === contract.id ? 'rgba(248, 113, 113, 0.5)' : 'rgba(255,255,255,0.07)'}`,
-                        borderRadius: 8,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
-                        <div style={{ fontWeight: 600, fontSize: 14 }}>{contract.title}</div>
-                        {activeContractId === contract.id && (
-                          <span
-                            style={{
-                              flexShrink: 0,
-                              fontSize: 9,
-                              fontWeight: 700,
-                              letterSpacing: '0.12em',
-                              color: '#fecaca',
-                              border: '1px solid rgba(248, 113, 113, 0.4)',
-                              borderRadius: 4,
-                              padding: '2px 6px',
-                            }}
-                          >
-                            ACTIVE
-                          </span>
+                        }}
+                        style={{
+                          background: activeContractId === contract.id ? 'rgba(80, 30, 35, 0.78)' : 'rgba(30, 36, 48, 0.92)',
+                          padding: '12px 14px',
+                          border: `1px solid ${
+                            activeContractId === contract.id
+                              ? 'rgba(248, 113, 113, 0.5)'
+                              : unlocked
+                                ? 'rgba(255,255,255,0.07)'
+                                : 'rgba(125, 211, 252, 0.18)'
+                          }`,
+                          borderRadius: 8,
+                          cursor: unlocked ? 'pointer' : 'not-allowed',
+                          opacity: unlocked ? 1 : 0.58,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+                          <div style={{ fontWeight: 600, fontSize: 14 }}>{contract.title}</div>
+                          {activeContractId === contract.id ? (
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 9,
+                                fontWeight: 700,
+                                letterSpacing: '0.12em',
+                                color: '#fecaca',
+                                border: '1px solid rgba(248, 113, 113, 0.4)',
+                                borderRadius: 4,
+                                padding: '2px 6px',
+                              }}
+                            >
+                              ACTIVE
+                            </span>
+                          ) : !unlocked ? (
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 9,
+                                fontWeight: 700,
+                                letterSpacing: '0.12em',
+                                color: '#bae6fd',
+                                border: '1px solid rgba(125, 211, 252, 0.28)',
+                                borderRadius: 4,
+                                padding: '2px 6px',
+                              }}
+                            >
+                              LOCKED
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="contract-desc" style={{ fontSize: 11, color: 'rgba(175, 190, 210, 0.88)', margin: '6px 0', lineHeight: 1.45 }}>
+                          {contract.description}
+                        </div>
+                        {!unlocked && (
+                          <div style={{ fontSize: 10, color: '#93c5fd', marginBottom: 6 }}>
+                            Clear {unlockRequirement} contract{unlockRequirement === 1 ? '' : 's'} to unlock.
+                          </div>
                         )}
+                        <div style={{ fontSize: 13, color: '#fde68a', fontFamily: fontMono }}>¤ {contract.reward.toLocaleString()}</div>
                       </div>
-                      <div className="contract-desc" style={{ fontSize: 11, color: 'rgba(175, 190, 210, 0.88)', margin: '6px 0', lineHeight: 1.45 }}>
-                        {contract.description}
-                      </div>
-                      <div style={{ fontSize: 13, color: '#fde68a', fontFamily: fontMono }}>¤ {contract.reward.toLocaleString()}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
               {completedContracts.length > 0 && (
                 <div style={{ marginTop: 14 }}>
@@ -1236,8 +1336,8 @@ const App: React.FC<AppProps> = ({ game }) => {
               </h3>
               <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
                 Keep one primary weapon in loadout; staging another from stash swaps the current one back out. Purchased 9×mm goes to stash
-                — move it into loadout before undocking. Mid-raid, R moves reserve rounds into the magazine; rare moon drops can tweak
-                damage and fire rate on that gun.
+                — move it into loadout before undocking. Quartermaster upgrades install permanently once unlocked, so each completed contract
+                opens heavier weapons tuning and better armor support.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 212, overflowY: 'auto', paddingRight: 4 }}>
                 {[
@@ -1271,11 +1371,71 @@ const App: React.FC<AppProps> = ({ game }) => {
                       cursor: money >= item.cost ? 'pointer' : 'not-allowed',
                       opacity: money >= item.cost ? 1 : 0.48,
                     }}
-                  >
-                    <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
-                    <div style={{ fontSize: 12, color: '#fde68a', fontFamily: fontMono }}>¤ {item.cost}</div>
-                  </div>
-                ))}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+                      <div style={{ fontSize: 12, color: '#fde68a', fontFamily: fontMono }}>¤ {item.cost}</div>
+                    </div>
+                  ))}
+                <div style={{ marginTop: 6, marginBottom: 2, fontSize: 10, letterSpacing: '0.12em', color: 'rgba(253, 186, 116, 0.72)', fontWeight: 700 }}>
+                  UPGRADES
+                </div>
+                {armoryUpgradeOffers.map((offer) => {
+                  const atMax = offer.level >= offer.maxLevel;
+                  const canBuy = offer.unlocked && !atMax && money >= offer.cost;
+                  return (
+                    <div
+                      key={offer.id}
+                      tabIndex={canBuy ? 0 : -1}
+                      role="button"
+                      className={canBuy ? 'ui-card-interactive' : undefined}
+                      onKeyDown={(e) => {
+                        if (!canBuy) return;
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          void buyUpgrade(offer, completedContractCount);
+                        }
+                      }}
+                      onClick={() => {
+                        if (!canBuy) return;
+                        void buyUpgrade(offer, completedContractCount);
+                      }}
+                      style={{
+                        background: offer.category === 'weapon' ? 'rgba(50, 32, 20, 0.68)' : 'rgba(30, 44, 38, 0.72)',
+                        padding: '10px 12px',
+                        border: `1px solid ${
+                          canBuy
+                            ? offer.category === 'weapon'
+                              ? 'rgba(253, 186, 116, 0.3)'
+                              : 'rgba(134, 239, 172, 0.24)'
+                            : 'rgba(255,255,255,0.08)'
+                        }`,
+                        borderRadius: 8,
+                        cursor: canBuy ? 'pointer' : 'default',
+                        opacity: offer.unlocked ? 1 : 0.56,
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{offer.label}</div>
+                          <div style={{ fontSize: 10, color: offer.category === 'weapon' ? '#fdba74' : '#86efac', marginTop: 2 }}>
+                            Lv {offer.level}/{offer.maxLevel} · {offer.effectSummary}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#fde68a', fontFamily: fontMono, flexShrink: 0 }}>
+                          {atMax ? 'MAX' : `¤ ${offer.cost}`}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11, color: 'rgba(175, 190, 210, 0.82)', marginTop: 6, lineHeight: 1.45 }}>
+                        {offer.description}
+                      </div>
+                      {!offer.unlocked && (
+                        <div style={{ fontSize: 10, color: '#93c5fd', marginTop: 6 }}>
+                          Unlocks after {offer.unlockAfterCompleted} completed contract{offer.unlockAfterCompleted === 1 ? '' : 's'}.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

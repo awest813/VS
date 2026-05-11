@@ -1,6 +1,7 @@
 import Dexie, { Table } from 'dexie';
 import { CANONICAL_CONTRACT_SEEDS } from '../contracts/contractRules';
 import { getExtraLoadoutPrimaryIds } from '../hub/loadoutRules';
+import { DEFAULT_UPGRADE_STATE, normalizeUpgradeState } from '../progression/profileProgression';
 
 export interface PlayerProfile {
   id?: number;
@@ -8,6 +9,10 @@ export interface PlayerProfile {
   money: number;
   reputation: number;
   health: number;
+  weaponDamageTier: number;
+  weaponHandlingTier: number;
+  armorPlatingTier: number;
+  servoAssistTier: number;
 }
 
 export interface StashItem {
@@ -49,9 +54,16 @@ export class SaveDB extends Dexie {
         name: 'Operative',
         money: 1000,
         reputation: 0,
-        health: 100
+        health: 100,
+        ...DEFAULT_UPGRADE_STATE,
       });
-
+    } else {
+      const profiles = await this.playerProfile.toArray();
+      for (const profile of profiles) {
+        if (profile.id === undefined) continue;
+        const normalized = normalizeUpgradeState(profile);
+        await this.playerProfile.update(profile.id, normalized);
+      }
     }
 
     const stashCount = await this.stashItems.count();

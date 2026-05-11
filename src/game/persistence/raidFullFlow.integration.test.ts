@@ -6,6 +6,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { db } from './SaveDB';
 import { mergeAmmoForShipExtract } from './raidExtract';
 import { persistStationRaidExtract } from './stationRaidPersist';
+import { DEFAULT_UPGRADE_STATE } from '../progression/profileProgression';
 import {
   STATION_DEBRIS_CONTRACT_TITLE,
   STATION_DEBRIS_KILLS_REQUIRED,
@@ -50,6 +51,7 @@ describe('Raid full flow (integration)', () => {
         money: 500,
         reputation: 0,
         health: 100,
+        ...DEFAULT_UPGRADE_STATE,
       });
     });
 
@@ -59,6 +61,28 @@ describe('Raid full flow (integration)', () => {
     expect(contracts.some((c) => c.title === SURVEY_DRIVE_CONTRACT_TITLE)).toBe(true);
     expect(contracts.some((c) => c.title === STATION_DEBRIS_CONTRACT_TITLE)).toBe(true);
     expect(contracts.some((c) => c.isActive && !c.isCompleted)).toBe(true);
+  });
+
+  it('initializeDefault backfills missing permanent upgrade tiers on legacy profiles', async () => {
+    await db.transaction('rw', db.playerProfile, db.stashItems, db.contracts, async () => {
+      await db.playerProfile.clear();
+      await db.stashItems.clear();
+      await db.contracts.clear();
+      await db.playerProfile.add({
+        name: 'Legacy Operative',
+        money: 500,
+        reputation: 0,
+        health: 100,
+      } as any);
+    });
+
+    await db.initializeDefault();
+
+    const profile = await db.playerProfile.toCollection().first();
+    expect(profile?.weaponDamageTier).toBe(0);
+    expect(profile?.weaponHandlingTier).toBe(0);
+    expect(profile?.armorPlatingTier).toBe(0);
+    expect(profile?.servoAssistTier).toBe(0);
   });
 
   it('initializeDefault demotes extra staged primaries from legacy loadouts', async () => {
@@ -71,6 +95,7 @@ describe('Raid full flow (integration)', () => {
         money: 500,
         reputation: 0,
         health: 100,
+        ...DEFAULT_UPGRADE_STATE,
       });
       await db.stashItems.bulkAdd([
         { itemId: 'rifle_01', quantity: 1, slot: 'loadout' },
