@@ -89,6 +89,16 @@ export const LOOT_DATABASE: Record<string, LootItemDefinition> = {
     value: 750,
     stackable: false,
   },
+  beacon_core: {
+    id: 'beacon_core',
+    name: 'Beacon core',
+    category: 'quest',
+    rarity: 'rare',
+    weight: 0.22,
+    size: { width: 1, height: 1 },
+    value: 600,
+    stackable: false,
+  },
   carbine_mk2: {
     id: 'carbine_mk2',
     name: 'Combat carbine',
