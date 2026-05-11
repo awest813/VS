@@ -43,17 +43,18 @@ export class EnemyAI {
   public mesh: Mesh;
   private aggregate: PhysicsAggregate;
 
-  private speed = 3.5;
+  private speed = 4.1;
   private health = 100;
   private isDead = false;
 
   /** Chase / combat activation radius */
-  private aggroRange = 15;
+  private aggroRange = 19;
 
-  private attackRange = 2.0;
-  private attackDamage = 15;
-  private attackCooldown = 1500; // ms
+  private attackRange = 2.4;
+  private attackDamage = 18;
+  private attackCooldown = 1200; // ms
   private lastAttackTime = 0;
+  private meleeCommitRange = 2.8;
 
   private isRanged: boolean = false;
   private projectileSpeed = 20;
@@ -87,22 +88,24 @@ export class EnemyAI {
     this.isRanged = !!opts.ranged;
 
     if (this.isRanged) {
-      this.attackRange = 12.0;
-      this.attackDamage = 5;
-      this.attackCooldown = 800;
+      this.attackRange = 10.5;
+      this.attackDamage = 7;
+      this.attackCooldown = 900;
     }
 
     this.behavior = opts.behavior ?? 'standard';
     this.movementProfile = createEnemyMovementProfile(this.behavior, this.isRanged);
 
     if (this.behavior === 'rusher') {
-      this.speed *= 1.32;
-      this.aggroRange = 18;
+      this.speed *= 1.42;
+      this.aggroRange = 24;
+      this.attackCooldown = Math.round(this.attackCooldown * 0.76);
+      this.attackDamage += this.isRanged ? 0 : 4;
     } else if (this.behavior === 'anchored') {
       this.speed *= 0.72;
       this.aggroRange = 12;
       if (this.isRanged) {
-        this.attackRange += 3;
+        this.attackRange += 2.4;
       }
     }
 
@@ -369,6 +372,9 @@ export class EnemyAI {
             if (this.isDead || this.sceneDisposed) return;
             if (this.game.player !== targetPlayer) return;
             if (!targetPlayer.mesh || targetPlayer.mesh.isDisposed()) return;
+            if (!this.mesh || this.mesh.isDisposed()) return;
+            const dist = Vector3.Distance(this.mesh.position, targetPlayer.mesh.position);
+            if (dist > this.meleeCommitRange) return;
             if (typeof targetPlayer.takeDamage === 'function') {
                 targetPlayer.takeDamage(this.attackDamage);
             }

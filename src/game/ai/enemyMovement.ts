@@ -117,7 +117,11 @@ export function planEnemyMovement(input: EnemyMovementPlanInput): EnemyMovementP
         };
       }
 
-      return { mode: 'attack', destination: null, nextMemory };
+      return {
+        mode: 'attack',
+        destination: clampToLeash(input.home, input.player, input.profile.leashRadius),
+        nextMemory,
+      };
     }
 
     return {

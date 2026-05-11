@@ -4,9 +4,11 @@ import { HitScan } from '../combat/HitScan';
 import { GameState } from '../StateMachine';
 import {
   applyWeaponLootMods,
+  computeDamageAtDistance,
   computeReloadTransfer,
   getWeaponArchetype,
   weaponReloadBlockedReason,
+  type WeaponArchetype,
   type WeaponLootMods,
 } from '../weapons/weaponDefinitions';
 import { AudioMix, BabylonPlaygroundSound } from '../audio/babylonPlaygroundSounds';
@@ -32,9 +34,11 @@ export class WeaponController {
   private hitscanRange = 100;
   private reloadDurationMs = 1800;
   private fireMode: 'auto' | 'semi' = 'auto';
+  private archetype: WeaponArchetype = getWeaponArchetype('rifle_01');
   private reloadTimer: ReturnType<typeof setTimeout> | null = null;
   private weaponStats: WeaponLootMods | null = null;
   private recoilScale = 1;
+  private recoilHeat = 0;
   private triggerHeld = false;
   private triggerConsumedForSemi = false;
 
@@ -90,6 +94,7 @@ export class WeaponController {
 
   private applyWeaponStats() {
     const archetype = getWeaponArchetype(this.weaponItemId);
+    this.archetype = archetype;
     this.maxAmmo = archetype.magazineSize;
     this.currentAmmo = archetype.magazineSize;
     this.pelletCount = archetype.pelletCount;
@@ -202,9 +207,10 @@ export class WeaponController {
     }
 
     const ray = this.camera.getForwardRay();
+    const dynamicSpread = this.pelletSpread + this.recoilHeat * 0.018;
     
     if (this.pelletCount > 1) {
-      const spread = this.pelletSpread;
+      const spread = dynamicSpread;
       for (let i = 0; i < this.pelletCount; i++) {
         const spreadRay = new Ray(
           ray.origin,
@@ -218,7 +224,16 @@ export class WeaponController {
         this.processHit(spreadRay);
       }
     } else {
-      this.processHit(new Ray(ray.origin, ray.direction, this.hitscanRange));
+      const spreadRay = new Ray(
+        ray.origin,
+        new Vector3(
+          ray.direction.x + (Math.random() - 0.5) * dynamicSpread,
+          ray.direction.y + (Math.random() - 0.5) * dynamicSpread,
+          ray.direction.z + (Math.random() - 0.5) * dynamicSpread
+        ).normalize(),
+        this.hitscanRange
+      );
+      this.processHit(spreadRay);
     }
 
     // Recoil animation
@@ -231,7 +246,8 @@ export class WeaponController {
     if (result.hit) {
       // Damage logic
       if (result.pickedMesh?.metadata?.onHit) {
-        result.pickedMesh.metadata.onHit(this.damage);
+        const scaledDamage = computeDamageAtDistance(this.archetype, this.damage, result.distance);
+        result.pickedMesh.metadata.onHit(scaledDamage);
         window.dispatchEvent(new CustomEvent('enemyHit'));
       }
 
@@ -256,6 +272,7 @@ export class WeaponController {
     if (!this.weaponMesh) return;
 
     const k = this.recoilScale;
+    this.recoilHeat = Math.min(1, this.recoilHeat + 0.24 * k);
     this.weaponMesh.position.z -= 0.1 * k;
     this.weaponMesh.position.y += 0.02 * k;
     this.weaponMesh.rotation.x -= 0.05 * k;
@@ -265,6 +282,7 @@ export class WeaponController {
     if (!this.weaponMesh) return;
 
     const dt = this.scene.getEngine().getDeltaTime() / 1000;
+    this.recoilHeat = Math.max(0, this.recoilHeat - dt * 2.8);
     
     // Smooth recovery back to base position
     const targetZ = 0.4;

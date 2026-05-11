@@ -133,4 +133,29 @@ describe('enemyMovement planner', () => {
     expect(plan.mode).toBe('idle');
     expect(plan.destination).toBeNull();
   });
+
+  it('keeps melee enemies pushing while in attack range', () => {
+    const profile = createEnemyMovementProfile('standard', false);
+    const plan = planEnemyMovement({
+      now: 5_000,
+      home: { x: 0, z: 0 },
+      enemy: { x: 1.9, z: 0 },
+      player: { x: 0, z: 0 },
+      playerDetected: true,
+      playerDistance: 1.9,
+      attackRange: 2.2,
+      profile,
+      memory: {
+        patrolPauseUntil: 0,
+        patrolSeed: 0,
+        patrolTarget: null,
+        lastKnownPlayerPosition: null,
+        strafeDirection: 1,
+        strafeUntil: 0,
+      },
+    });
+
+    expect(plan.mode).toBe('attack');
+    expect(plan.destination).toEqual({ x: 0, z: 0 });
+  });
 });
