@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyWeaponLootMods,
+  computeDamageAtDistance,
   computeReloadTransfer,
   getWeaponArchetype,
   getWeaponRaidHudHint,
@@ -67,7 +68,23 @@ describe('weaponDefinitions', () => {
       expect(a.viewportMesh.depth).toBeGreaterThan(0.2);
       expect(a.recoilScale).toBeGreaterThan(0);
       expect(['auto', 'semi']).toContain(a.fireMode);
+      expect(a.optimalRangeMeters).toBeGreaterThan(0);
+      expect(a.farDamageMultiplier).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('computeDamageAtDistance favors close-range pressure and long-range falloff', () => {
+    const shotgun = WEAPON_ARCHETYPES.shotgun_01;
+    const close = computeDamageAtDistance(shotgun, shotgun.hitscanDamage, 1);
+    const mid = computeDamageAtDistance(shotgun, shotgun.hitscanDamage, shotgun.optimalRangeMeters);
+    const far = computeDamageAtDistance(shotgun, shotgun.hitscanDamage, shotgun.hitscanRange);
+    expect(close).toBeGreaterThan(mid);
+    expect(mid).toBeGreaterThan(far);
+
+    const rifle = WEAPON_ARCHETYPES.rifle_01;
+    const rifleClose = computeDamageAtDistance(rifle, rifle.hitscanDamage, 0);
+    const rifleFar = computeDamageAtDistance(rifle, rifle.hitscanDamage, rifle.hitscanRange);
+    expect(rifleClose).toBeGreaterThan(rifleFar);
   });
 
   it('shotgun is semi-auto while rifle/pulse remain automatic', () => {
