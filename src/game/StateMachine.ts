@@ -3,6 +3,7 @@ export enum GameState {
   SHIP,
   STATION,
   MOON_BASE,
+  PLANET,
   RESULTS,
   DEATH
 }

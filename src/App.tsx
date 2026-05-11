@@ -9,6 +9,7 @@ import {
   getContractRaidHint,
   contractProgressSummary,
   hubDockingAllowed,
+  getContractDeployZone,
 } from './game/contracts/contractRules';
 import { ARMORY_PRIMARY_OFFERS, getWeaponRaidHudHint } from './game/weapons/weaponDefinitions';
 import { getLootDefinition, lootTradeInCredits } from './game/loot/lootDatabase';
@@ -106,7 +107,7 @@ const App: React.FC<AppProps> = ({ game }) => {
           setEquippedWeaponItemId(w.weaponItemId);
         }
         const st = game.stateMachine.getState();
-        if (st === GameState.STATION || st === GameState.MOON_BASE) {
+        if (st === GameState.STATION || st === GameState.MOON_BASE || st === GameState.PLANET) {
           setStationRaidKills(game.enemiesKilledStation);
         }
         if (game.player.inventory) {
@@ -329,7 +330,7 @@ const App: React.FC<AppProps> = ({ game }) => {
   };
 
   const inFirstPerson =
-    (gameState === GameState.SHIP || gameState === GameState.STATION || gameState === GameState.MOON_BASE) &&
+    (gameState === GameState.SHIP || gameState === GameState.STATION || gameState === GameState.MOON_BASE || gameState === GameState.PLANET) &&
     !isShipUIOpen;
   const showPointerHint = inFirstPerson && !pointerLocked;
   const healthPct = health.max > 0 ? Math.min(100, (health.current / health.max) * 100) : 0;
@@ -357,8 +358,12 @@ const App: React.FC<AppProps> = ({ game }) => {
   const completedContracts = contracts.filter((c) => c.isCompleted);
   const canDockFromHub = hubDockingAllowed(contracts, activeContractId);
   const activeRaidContract = contracts.find((c) => c.isActive && !c.isCompleted);
+  // Determine which airlocks are available based on the active contract's zone
+  const activeContractDeployZone = activeRaidContract ? getContractDeployZone(activeRaidContract.title) : null;
+  const canDockStation = canDockFromHub && activeContractDeployZone !== 'planet';
+  const canDeployPlanet = canDockFromHub && activeContractDeployZone === 'planet';
   const raidContractZone =
-    gameState === GameState.STATION ? 'station' : gameState === GameState.MOON_BASE ? 'moon' : null;
+    gameState === GameState.STATION ? 'station' : gameState === GameState.MOON_BASE ? 'moon' : gameState === GameState.PLANET ? 'planet' : null;
   const raidProgressLine = activeRaidContract
     ? contractProgressSummary(activeRaidContract.title, inventory, stationRaidKills)
     : null;
@@ -408,7 +413,7 @@ const App: React.FC<AppProps> = ({ game }) => {
         </div>
       )}
 
-      {(gameState === GameState.STATION || gameState === GameState.MOON_BASE) && environmentalSurge && (
+      {(gameState === GameState.STATION || gameState === GameState.MOON_BASE || gameState === GameState.PLANET) && environmentalSurge && (
         // Layering: below toast (24) / lore (26); above contract (7) & pointer hint (20).
         <div
           style={{
@@ -494,20 +499,22 @@ const App: React.FC<AppProps> = ({ game }) => {
             position: 'absolute',
             bottom: safePad.paddingBottom,
             left: safePad.paddingLeft,
-            maxWidth: 380,
+            maxWidth: 400,
             pointerEvents: 'none',
             ...panelBase,
             padding: '14px 18px',
             zIndex: 8,
           }}
         >
-          <div style={{ marginBottom: 8, ...hud.sectionEyebrow('hub') }}>SHIP HUB</div>
+          <div style={{ marginBottom: 8, ...hud.sectionEyebrow('hub') }}>ICV RELENTLESS — FREIGHTER HUB</div>
           <p style={{ margin: '0 0 8px 0', fontSize: 13, lineHeight: 1.55, color: 'rgba(200, 215, 235, 0.92)' }}>
-            Aim at the bridge <strong style={{ fontWeight: 650 }}>operations console</strong> (cyan screen) and press{' '}
-            <span style={{ fontFamily: fontMono, color: '#a5d8ff' }}>E</span> — stash, loadout, contracts, armory, dock.
+            Head to the bridge and aim at the <strong style={{ fontWeight: 650 }}>operations console</strong> (cyan screen), then press{' '}
+            <span style={{ fontFamily: fontMono, color: '#a5d8ff' }}>E</span> — stash, loadout, contracts, armory, and deployment.
           </p>
           <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: 'rgba(155, 175, 205, 0.82)' }}>
-            Flashlight batteries recharge here. Primaries stay holstered until you dock with the station.
+            Three mission zones: <strong>Abandoned Station</strong> (Airlock Alpha · port) ·{' '}
+            <strong>Moon Base</strong> (via station lift) · <strong>Planet Outpost</strong> (Airlock Beta · starboard).
+            Flashlight batteries recharge aboard.
           </p>
         </div>
       )}
@@ -671,7 +678,7 @@ const App: React.FC<AppProps> = ({ game }) => {
         </div>
       )}
 
-      {(gameState === GameState.STATION || gameState === GameState.MOON_BASE) && (
+      {(gameState === GameState.STATION || gameState === GameState.MOON_BASE || gameState === GameState.PLANET) && (
         <div
           style={{
             position: 'absolute',
@@ -914,40 +921,64 @@ const App: React.FC<AppProps> = ({ game }) => {
           >
           <p style={{ margin: '0 0 4px 0', ...hud.sectionEyebrow('ops') }}>OPS / CONTRACT</p>
           <h1 id="ship-ops-heading" style={{ margin: '0 0 12px 0', fontSize: 'clamp(1.35rem, 2.4vw, 1.85rem)', fontWeight: 700, letterSpacing: '-0.02em' }}>
-            Void Sovereigns — ship ops
+            ICV Relentless — Freighter Ops
           </h1>
           <p style={{ margin: '0 0 20px 0', fontSize: 12, color: 'rgba(160, 175, 200, 0.82)' }}>
             <span style={{ fontFamily: fontMono, color: 'rgba(180, 215, 255, 0.9)' }}>Esc</span> or backdrop click to close · Same data as the cyan bridge screen ·
             {' '}
             {contracts.some((c) => !c.isCompleted)
-              ? 'Select one contract before docking'
-              : 'All contracts complete — free docking is available'}
+              ? 'Select a contract to unlock the corresponding airlock'
+              : 'All contracts complete — free deployment is available'}
           </p>
           <h2 style={{ color: '#fde68a', margin: '0 0 22px 0', fontSize: 'clamp(1.05rem, 2vw, 1.35rem)', fontFamily: fontMono, fontWeight: 550 }}>¤ {money.toLocaleString()}</h2>
           <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               type="button"
-              aria-label={canDockFromHub ? 'Dock with station and begin raid' : 'Select a contract below before docking'}
-              title={!canDockFromHub ? 'Activate a contract on the right to unlock docking' : undefined}
+              aria-label={canDockStation ? 'Dock with abandoned station via Airlock Alpha' : (activeContractDeployZone === 'planet' ? 'Active contract deploys to planet — use Deploy to Outpost' : 'Select a station or moon contract to unlock Airlock Alpha')}
+              title={!canDockStation ? (activeContractDeployZone === 'planet' ? 'Switch to a station/moon contract to unlock Airlock Alpha' : 'Activate a station or moon contract to dock') : undefined}
               onClick={() => {
                 setIsShipUIOpen(false);
                 game.stateMachine.setState(GameState.STATION);
               }}
-              disabled={!canDockFromHub}
+              disabled={!canDockStation}
               style={{
                 padding: '14px 28px',
                 fontSize: 15,
                 fontFamily: fontUi,
                 fontWeight: 600,
-                cursor: canDockFromHub ? 'pointer' : 'not-allowed',
-                background: canDockFromHub ? 'linear-gradient(180deg, #b91c1c, #7f1d1d)' : 'rgba(60, 65, 75, 0.8)',
-                color: canDockFromHub ? '#fff' : 'rgba(180, 185, 195, 0.6)',
+                cursor: canDockStation ? 'pointer' : 'not-allowed',
+                background: canDockStation ? 'linear-gradient(180deg, #b91c1c, #7f1d1d)' : 'rgba(60, 65, 75, 0.8)',
+                color: canDockStation ? '#fff' : 'rgba(180, 185, 195, 0.6)',
                 border: '1px solid rgba(255,255,255,0.12)',
                 borderRadius: 8,
                 letterSpacing: '0.06em',
               }}
             >
-              {canDockFromHub ? 'DOCK WITH STATION' : 'SELECT A CONTRACT'}
+              {canDockStation ? 'AIRLOCK α — STATION' : activeContractDeployZone === 'planet' ? 'α LOCKED (PLANET CONTRACT)' : 'SELECT A CONTRACT'}
+            </button>
+            <button
+              type="button"
+              aria-label={canDeployPlanet ? 'Deploy to planet outpost via Airlock Beta' : 'Select the planet beacon contract to unlock Airlock Beta'}
+              title={!canDeployPlanet ? (activeContractDeployZone === 'station_chain' ? 'Switch to the planet beacon contract to unlock Airlock Beta' : 'Activate the Recover Beacon Core contract to deploy') : undefined}
+              onClick={() => {
+                setIsShipUIOpen(false);
+                game.stateMachine.setState(GameState.PLANET);
+              }}
+              disabled={!canDeployPlanet}
+              style={{
+                padding: '14px 28px',
+                fontSize: 15,
+                fontFamily: fontUi,
+                fontWeight: 600,
+                cursor: canDeployPlanet ? 'pointer' : 'not-allowed',
+                background: canDeployPlanet ? 'linear-gradient(180deg, #1d4ed8, #1e3a8a)' : 'rgba(60, 65, 75, 0.8)',
+                color: canDeployPlanet ? '#fff' : 'rgba(180, 185, 195, 0.6)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 8,
+                letterSpacing: '0.06em',
+              }}
+            >
+              {canDeployPlanet ? 'AIRLOCK β — OUTPOST' : activeContractDeployZone === 'station_chain' ? 'β LOCKED (STATION CONTRACT)' : 'SELECT PLANET CONTRACT'}
             </button>
             <button
               type="button"
@@ -1087,7 +1118,7 @@ const App: React.FC<AppProps> = ({ game }) => {
                 CONTRACTS
               </h3>
               <p style={{ margin: '0 0 12px 0', fontSize: 11, lineHeight: 1.45, color: 'rgba(150, 168, 195, 0.82)', textAlign: 'left' }}>
-                One mission at a time. Meet the objective on the station or moonbase, ride green extracts to stash loot; the final jump from the station to your ship settles payment.
+                One mission at a time. Station &amp; moon contracts unlock Airlock Alpha (port); planet contracts unlock Airlock Beta (starboard). Meet objectives on-site, ride green extracts to stash loot; final extraction to the freighter settles payment.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 212, overflowY: 'auto' }}>
                 {contracts.filter((c) => !c.isCompleted).length === 0 && (

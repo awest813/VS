@@ -26,3 +26,17 @@ export const STATION_STANDARD_CRATE: WeightedRaidLootTable = {
     { mode: 'weapon_primary', weight: 12 },
   ],
 };
+
+/** Planet outpost salvage crate. Dangerous zone — rewards skew toward ammo, occasional rare drop. */
+export const PLANET_STANDARD_CRATE: WeightedRaidLootTable = {
+  id: 'planet_standard_crate',
+  rolls: 1,
+  entries: [
+    { mode: 'item', itemId: 'ammo_9mm', weight: 30, minQuantity: 20, maxQuantity: 50 },
+    { mode: 'item', itemId: 'scrap_metal', weight: 18, minQuantity: 1, maxQuantity: 3 },
+    { mode: 'item', itemId: 'copper_wire', weight: 14, minQuantity: 1, maxQuantity: 3 },
+    { mode: 'item', itemId: 'medkit', weight: 15, minQuantity: 1, maxQuantity: 1 },
+    { mode: 'item', itemId: 'bandage', weight: 12, minQuantity: 1, maxQuantity: 3 },
+    { mode: 'weapon_primary', weight: 18 },
+  ],
+};

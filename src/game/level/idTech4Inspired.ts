@@ -16,6 +16,15 @@ export const doom3RaidMoonIBL = {
   fogDensity: 0.034,
 } as const;
 
+/** Planet outpost: thick Venusian atmosphere — dense orange fog, very low direct light. */
+export const planetOutpostAmbient = {
+  intensity: 0.28,
+  exposure: 0.78,
+  contrast: 1.12,
+  hemisphereIntensity: 0.055,
+  fogDensity: 0.048,
+} as const;
+
 /** Handheld “shoulder lamp” analogue (narrow range = less fill, reads closer to Tech 4 mood). */
 export const doom3HandLight = {
   /** Max intensity multiplier when flashlight is enabled and battery is full */

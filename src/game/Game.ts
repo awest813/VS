@@ -109,6 +109,9 @@ export class Game {
     if (state === GameState.STATION && previous === GameState.MOON_BASE) {
       this.enemiesKilledStation = 0;
     }
+    if (state === GameState.PLANET && previous === GameState.SHIP) {
+      this.enemiesKilledStation = 0;
+    }
 
     if (this.activeScene) {
       if (this.player) this.capturePlayerState();
@@ -138,6 +141,9 @@ export class Game {
       case GameState.MOON_BASE:
         await this.loadMoonBaseScene();
         break;
+      case GameState.PLANET:
+        await this.loadPlanetScene();
+        break;
       default:
         // Generic fallback scene
         this.activeScene = new Scene(this.engine);
@@ -162,5 +168,11 @@ export class Game {
     const { MoonBaseScene } = await import('./scenes/MoonBaseScene');
     const base = new MoonBaseScene(this);
     this.activeScene = await base.create();
+  }
+
+  private async loadPlanetScene() {
+    const { PlanetScene } = await import('./scenes/PlanetScene');
+    const planet = new PlanetScene(this);
+    this.activeScene = await planet.create();
   }
 }
