@@ -433,7 +433,10 @@ export class PlayerController {
         this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeInteract);
         this.uiBlipSound.setPlaybackRate(AudioMix.uiBlipRateInteract + Math.random() * 0.06);
         this.uiBlipSound.play();
-        (interactable.metadata?.onInteract as () => void)();
+        const onInteract = interactable.metadata?.onInteract;
+        if (typeof onInteract === 'function') {
+          onInteract();
+        }
         this.inputMap['KeyE'] = false;
       }
     } else {
