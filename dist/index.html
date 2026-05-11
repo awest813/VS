@@ -119,13 +119,20 @@
           transform: translateX(-50%) translateY(0);
         }
       }
+      @keyframes pulse-vignette {
+        0%, 100% { opacity: 0.75; }
+        50%       { opacity: 1; }
+      }
       @media (prefers-reduced-motion: reduce) {
         .ui-toast {
           animation: none;
         }
+        @keyframes pulse-vignette {
+          0%, 100% { opacity: 1; }
+        }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-DseCaVJe.js"></script>
+    <script type="module" crossorigin src="/assets/index-DNMilGxH.js"></script>
   </head>
   <body>
     <div id="root"></div>

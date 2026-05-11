@@ -232,6 +232,7 @@ export class WeaponController {
       // Damage logic
       if (result.pickedMesh?.metadata?.onHit) {
         result.pickedMesh.metadata.onHit(this.damage);
+        window.dispatchEvent(new CustomEvent('enemyHit'));
       }
 
       // Impact effect

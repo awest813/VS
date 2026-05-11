@@ -83,6 +83,8 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [loreTerminalText, setLoreTerminalText] = useState<string | null>(null);
   const [openMerchantId, setOpenMerchantId] = useState<string | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(false);
+  const [hitMarker, setHitMarker] = useState(false);
+  const [raidFailed, setRaidFailed] = useState(false);
 
   const shipOpsDialogRef = useRef<HTMLDivElement>(null);
 
@@ -265,12 +267,29 @@ const App: React.FC<AppProps> = ({ game }) => {
   }, [openMerchantId, noticeOpen, game]);
 
   useEffect(() => {
-    if (!isShipUIOpen) return;
-    const id = window.requestAnimationFrame(() => {
-      shipOpsDialogRef.current?.focus({ preventScroll: true });
-    });
-    return () => window.cancelAnimationFrame(id);
-  }, [isShipUIOpen]);
+    const hitMarkerTimer = { id: 0 };
+    const onHit = () => {
+      setHitMarker(true);
+      clearTimeout(hitMarkerTimer.id);
+      hitMarkerTimer.id = window.setTimeout(() => setHitMarker(false), 140);
+    };
+    window.addEventListener('enemyHit', onHit);
+    return () => {
+      window.removeEventListener('enemyHit', onHit);
+      clearTimeout(hitMarkerTimer.id);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onDeath = () => setRaidFailed(true);
+    window.addEventListener('raidPlayerDeath', onDeath);
+    return () => window.removeEventListener('raidPlayerDeath', onDeath);
+  }, []);
+
+  // Clear the death overlay once the scene returns to ship
+  useEffect(() => {
+    if (gameState === GameState.SHIP) setRaidFailed(false);
+  }, [gameState]);
 
   useEffect(() => {
     if (!toast) return;
@@ -502,6 +521,46 @@ const App: React.FC<AppProps> = ({ game }) => {
         lineHeight: 1.45,
       }}
     >
+      {/* Low-health screen vignette */}
+      {healthLow && inFirstPerson && (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            zIndex: 2,
+            background: 'radial-gradient(ellipse at center, transparent 52%, rgba(220, 20, 40, 0.38) 100%)',
+            animation: 'pulse-vignette 1.2s ease-in-out infinite',
+          }}
+        />
+      )}
+
+      {/* Raid-failed death overlay */}
+      {raidFailed && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 50,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(10, 4, 6, 0.82)',
+            pointerEvents: 'none',
+          }}
+        >
+          <div style={{ fontSize: 'clamp(2rem, 6vw, 4rem)', fontWeight: 800, letterSpacing: '0.12em', color: '#ef4444', textShadow: '0 0 40px rgba(239,68,68,0.55)' }}>
+            RAID FAILED
+          </div>
+          <div style={{ marginTop: 14, fontSize: 14, color: 'rgba(200,210,225,0.82)', letterSpacing: '0.06em' }}>
+            Backpack forfeited · returning to ship…
+          </div>
+        </div>
+      )}
       {toast && (
         <div className="ui-toast" role="status" aria-live="polite" style={{ zIndex: 24, pointerEvents: 'none' }}>
           <div style={{ ...panelBase, padding: '12px 22px', color: '#e8eef8', fontSize: 13, textAlign: 'center' }}>{toast}</div>
@@ -742,14 +801,15 @@ const App: React.FC<AppProps> = ({ game }) => {
                 position: 'absolute',
                 left: '50%',
                 top: '50%',
-                width: 4,
-                height: 4,
-                marginLeft: -2,
-                marginTop: -2,
+                width: hitMarker ? 8 : 4,
+                height: hitMarker ? 8 : 4,
+                marginLeft: hitMarker ? -4 : -2,
+                marginTop: hitMarker ? -4 : -2,
                 borderRadius: '50%',
                 background:
-                  healthLow ? '#fb7185' : batteryCritical && !healthLow ? '#fcd34d' : 'rgba(255,255,255,0.95)',
-                boxShadow: '0 0 4px rgba(0,0,0,0.4)',
+                  hitMarker ? '#ff3b3b' : healthLow ? '#fb7185' : batteryCritical && !healthLow ? '#fcd34d' : 'rgba(255,255,255,0.95)',
+                boxShadow: hitMarker ? '0 0 8px rgba(255,60,60,0.8)' : '0 0 4px rgba(0,0,0,0.4)',
+                transition: 'width 0.06s ease, height 0.06s ease, background 0.06s ease, box-shadow 0.06s ease',
               }}
             />
           </div>
@@ -812,6 +872,12 @@ const App: React.FC<AppProps> = ({ game }) => {
             <h2 style={{ margin: '0 0 10px 0', ...hud.label() }}>
               STATUS
             </h2>
+            {stationRaidKills > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10, paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <span style={{ fontSize: 12, color: 'rgba(160, 175, 195, 0.9)' }}>Kills</span>
+                <span style={{ fontFamily: fontMono, fontSize: 14, fontWeight: 600, color: '#fda4af' }}>{stationRaidKills}</span>
+              </div>
+            )}
             <div
               style={{
                 marginBottom: 10,

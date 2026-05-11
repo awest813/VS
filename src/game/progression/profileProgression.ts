@@ -5,6 +5,7 @@ export interface PersistentUpgradeState {
   weaponHandlingTier: number;
   armorPlatingTier: number;
   servoAssistTier: number;
+  batteryPackTier: number;
 }
 
 export const DEFAULT_UPGRADE_STATE: PersistentUpgradeState = {
@@ -12,6 +13,7 @@ export const DEFAULT_UPGRADE_STATE: PersistentUpgradeState = {
   weaponHandlingTier: 0,
   armorPlatingTier: 0,
   servoAssistTier: 0,
+  batteryPackTier: 0,
 };
 
 export type UpgradeField = keyof PersistentUpgradeState;
@@ -68,6 +70,16 @@ export const ARMORY_UPGRADE_OFFERS: readonly UpgradeOffer[] = [
     maxLevel: 2,
     unlockAfterCompleted: 3,
   },
+  {
+    id: 'batteryPackTier',
+    label: 'High-Capacity Cell',
+    category: 'armor',
+    description: 'Installs a denser power cell so the flashlight runs longer before needing recharge.',
+    effectSummary: '+25 max battery / level',
+    cost: 160,
+    maxLevel: 2,
+    unlockAfterCompleted: 2,
+  },
 ] as const;
 
 export function normalizeUpgradeState(
@@ -78,6 +90,7 @@ export function normalizeUpgradeState(
     weaponHandlingTier: Math.max(0, record?.weaponHandlingTier ?? 0),
     armorPlatingTier: Math.max(0, record?.armorPlatingTier ?? 0),
     servoAssistTier: Math.max(0, record?.servoAssistTier ?? 0),
+    batteryPackTier: Math.max(0, record?.batteryPackTier ?? 0),
   };
 }
 
@@ -90,7 +103,7 @@ export function applyArmorUpgradeBonuses(state: PersistentUpgradeState): {
   return {
     maxHealth: 100 + upgrades.armorPlatingTier * 25,
     maxStamina: 100 + upgrades.servoAssistTier * 15,
-    maxBattery: 100,
+    maxBattery: 100 + upgrades.batteryPackTier * 25,
   };
 }
 

@@ -13,6 +13,7 @@ export interface PlayerProfile {
   weaponHandlingTier: number;
   armorPlatingTier: number;
   servoAssistTier: number;
+  batteryPackTier: number;
 }
 
 export interface StashItem {

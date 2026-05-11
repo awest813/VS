@@ -12,6 +12,7 @@ import {
   AnimationGroup,
   PointLight,
   PBRMaterial,
+  Ray,
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF';
 import { Game } from '../Game';
@@ -337,7 +338,8 @@ export class EnemyAI {
             const dt = this.game.engine.getDeltaTime() / 1000;
             tracer.position.addInPlace(direction.scale(speed * dt));
 
-            if (Vector3.Distance(tracer.position, targetPlayer.mesh.position) < 1.5) {
+            const distToPlayer = Vector3.Distance(tracer.position, targetPlayer.mesh.position);
+            if (distToPlayer < 1.5) {
                 if (typeof targetPlayer.takeDamage === 'function') {
                     targetPlayer.takeDamage(this.attackDamage);
                 }
@@ -346,6 +348,17 @@ export class EnemyAI {
             } else if (Date.now() - spawnTime > lifeTime) {
                 tracer.dispose();
                 this.scene.onBeforeRenderObservable.remove(observer);
+            } else {
+                // Wall collision: if something solid (non-entity) is between tracer and player, destroy projectile
+                const toPlayer = targetPlayer.mesh.position.subtract(tracer.position);
+                const wallPick = this.scene.pickWithRay(
+                  new Ray(tracer.position, toPlayer.normalize(), distToPlayer),
+                  (m) => m !== tracer && m.isPickable && !m.metadata?.onHit
+                );
+                if (wallPick?.hit) {
+                  tracer.dispose();
+                  this.scene.onBeforeRenderObservable.remove(observer);
+                }
             }
         });
 
