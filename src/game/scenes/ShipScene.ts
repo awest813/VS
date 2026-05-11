@@ -269,6 +269,13 @@ export class ShipScene {
     // Stack C — port forward bay
     addBox('FreightStkC0', { width: 2.0, height: 1.2, depth: 2.0 }, new Vector3(-8.0, 0.6, 25.0), cargoBulk);
     addBox('FreightStkC1', { width: 2.0, height: 1.2, depth: 2.0 }, new Vector3(-8.0, 1.8, 25.0), stashMat);
+    // Stack D — port mid cargo lane
+    addBox('FreightStkD0', { width: 1.7, height: 1.0, depth: 1.7 }, new Vector3(-12.2, 0.5, 7.8), stashMat);
+    addBox('FreightStkD1', { width: 1.7, height: 1.0, depth: 1.7 }, new Vector3(-12.2, 1.5, 7.8), cargoBulk);
+    addBox('FreightStkD2', { width: 1.3, height: 0.8, depth: 1.3 }, new Vector3(-10.7, 0.4, 8.9), cargoBulk);
+    // Stack E — starboard aft cargo lane
+    addBox('FreightStkE0', { width: 1.5, height: 1.0, depth: 1.5 }, new Vector3(11.6, 0.5, 3.8), cargoBulk);
+    addBox('FreightStkE1', { width: 1.5, height: 1.0, depth: 1.5 }, new Vector3(11.6, 1.5, 3.8), stashMat);
     // Barrel cluster on starboard aft (extra hazard dressing)
     addBox('SatBrl0', { width: 0.8, height: 0.8, depth: 0.8 }, new Vector3(19.0, 0.4, -2.0), cargoBulk);
     addBox('SatBrl1', { width: 0.8, height: 0.8, depth: 0.8 }, new Vector3(19.8, 0.4, -2.8), cargoBulk);
@@ -351,6 +358,18 @@ export class ShipScene {
     qmScreen.rotation.x = -Math.PI / 10;
     qmScreen.material = screenMat;
     qmScreen.isPickable = false;
+
+    // Bridge side workstations (navigation + relay diagnostics)
+    addBox('BridgeStationPort', { width: 2.2, height: 1.0, depth: 1.1 }, new Vector3(-6.0, 0.5, 34.7), consoleMat);
+    addBox('BridgeStationStar', { width: 2.2, height: 1.0, depth: 1.1 }, new Vector3(6.0, 0.5, 34.7), consoleMat);
+    addBox('BridgeStationPortPanel', { width: 1.5, height: 0.75, depth: 0.08 }, new Vector3(-6.0, 1.25, 35.2), screenMat, 0, false);
+    addBox('BridgeStationStarPanel', { width: 1.5, height: 0.75, depth: 0.08 }, new Vector3(6.0, 1.25, 35.2), screenMat, 0, false);
+
+    // Airlock staging lockers and prep crates
+    addBox('AirlockPrepLockerPort', { width: 0.35, height: 2.2, depth: 2.2 }, new Vector3(-17.8, 1.1, -36.0), lockerMat, 0, false);
+    addBox('AirlockPrepLockerStar', { width: 0.35, height: 2.2, depth: 2.2 }, new Vector3(17.8, 1.1, -36.0), lockerMat, 0, false);
+    addBox('AirlockPrepCratePort', { width: 1.2, height: 0.8, depth: 1.2 }, new Vector3(-14.8, 0.4, -36.2), stashMat, 0, false);
+    addBox('AirlockPrepCrateStar', { width: 1.2, height: 0.8, depth: 1.2 }, new Vector3(14.8, 0.4, -36.2), stashMat, 0, false);
 
     // --- Airlock Row: z -34, full width ---
     const airFloor = MeshBuilder.CreateBox('airlockFloor', { width: SHIP_W, height: 1, depth: 8 }, scene);
