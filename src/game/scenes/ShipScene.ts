@@ -90,6 +90,16 @@ export class ShipScene {
     screenMat.metallic = 0;
     screenMat.roughness = 1;
 
+    const kioskMat  = makePbrMetalPanel(scene, 'kioskMat',  new Color3(0.30, 0.22, 0.14), bump, 0.55, 0.50);
+    const lockerMat = makePbrMetalPanel(scene, 'lockerMat', new Color3(0.16, 0.20, 0.24), bump, 0.58, 0.65);
+    const tableMat  = makePbrMetalPanel(scene, 'tableMat',  new Color3(0.22, 0.20, 0.18), bump, 0.62, 0.60);
+
+    const noticeMat = new PBRMaterial('noticeMat', scene);
+    noticeMat.albedoColor  = new Color3(0.18, 0.36, 0.28);
+    noticeMat.metallic     = 0.15;
+    noticeMat.roughness    = 0.80;
+    noticeMat.emissiveColor = new Color3(0.04, 0.14, 0.08);
+
     // ── Helpers ────────────────────────────────────────────────────────────────
     const addBox = (
       name: string,
@@ -248,6 +258,100 @@ export class ShipScene {
     addBox('ReactorBlock', { width: 4, height: 4, depth: 4 }, new Vector3(18, 2, -30), cargoBulk);
     addBox('EngConsole', { width: 3.5, height: 1, depth: 1.2 }, new Vector3(13, 0.6, -25), consoleMat);
 
+    // ── CARGO BAY — extra freight atmosphere ───────────────────────────────────
+    // Stack A — starboard mid bay, near pillar
+    addBox('FreightStkA0', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(13.5, 0.5, 14.0), stashMat);
+    addBox('FreightStkA1', { width: 1.6, height: 1.0, depth: 1.6 }, new Vector3(13.5, 1.5, 14.0), stashMat);
+    addBox('FreightStkA2', { width: 1.6, height: 0.8, depth: 1.4 }, new Vector3(13.5, 0.4, 12.0), cargoBulk);
+    // Stack B — starboard forward
+    addBox('FreightStkB0', { width: 1.8, height: 1.0, depth: 1.8 }, new Vector3(17.0, 0.5, 24.0), cargoBulk);
+    addBox('FreightStkB1', { width: 1.8, height: 1.0, depth: 1.8 }, new Vector3(17.0, 1.5, 24.0), cargoBulk);
+    // Stack C — port forward bay
+    addBox('FreightStkC0', { width: 2.0, height: 1.2, depth: 2.0 }, new Vector3(-8.0, 0.6, 25.0), cargoBulk);
+    addBox('FreightStkC1', { width: 2.0, height: 1.2, depth: 2.0 }, new Vector3(-8.0, 1.8, 25.0), stashMat);
+    // Barrel cluster on starboard aft (extra hazard dressing)
+    addBox('SatBrl0', { width: 0.8, height: 0.8, depth: 0.8 }, new Vector3(19.0, 0.4, -2.0), cargoBulk);
+    addBox('SatBrl1', { width: 0.8, height: 0.8, depth: 0.8 }, new Vector3(19.8, 0.4, -2.8), cargoBulk);
+
+    // ── SUPPLY POST — Marta's Surplus (cargo bay, starboard aft) ──────────────
+    const supplyCounter = addBox(
+      'Supply Post',
+      { width: 3.0, height: 1.1, depth: 1.2 },
+      new Vector3(8.0, 0.55, -4.0),
+      kioskMat,
+    );
+    supplyCounter.metadata = {
+      hudLabel: "Supply Post — Marta's Surplus",
+      onInteract: () => {
+        window.dispatchEvent(new CustomEvent('openMerchant', { detail: { merchantId: 'supply_post' } }));
+        document.exitPointerLock();
+      },
+    };
+    // Back-panel riser for the counter
+    addBox('SupplyRiser', { width: 3.0, height: 2.2, depth: 0.18 }, new Vector3(8.0, 1.1, -4.7), kioskMat, 0, false);
+    // Small screen on the counter top
+    const supplyScreen = MeshBuilder.CreatePlane('SupplyScreen', { width: 1.4, height: 0.7 }, scene);
+    supplyScreen.position.set(8.0, 1.3, -4.55);
+    supplyScreen.rotation.x = -Math.PI / 10;
+    supplyScreen.material = screenMat;
+    supplyScreen.isPickable = false;
+
+    // ── CREW NOTICE BOARD (cargo bay aft wall, z = -10) ───────────────────────
+    const noticeBoard = MeshBuilder.CreateBox(
+      'Crew Notice Board',
+      { width: 2.0, height: 1.4, depth: 0.15 },
+      scene,
+    );
+    noticeBoard.position.set(-5.0, 2.8, -9.92);
+    noticeBoard.material = noticeMat;
+    noticeBoard.metadata = {
+      hudLabel: 'Crew Notice Board',
+      onInteract: () => {
+        window.dispatchEvent(new CustomEvent('showCrewNotice'));
+        document.exitPointerLock();
+      },
+    };
+    new PhysicsAggregate(noticeBoard, PhysicsShapeType.BOX, { mass: 0 }, scene);
+    // Bracket trim around the board
+    addBox('NoticeBracketT', { width: 2.2, height: 0.1, depth: 0.1 }, new Vector3(-5.0, 3.58, -9.85), accentMat, 0, false);
+    addBox('NoticeBracketB', { width: 2.2, height: 0.1, depth: 0.1 }, new Vector3(-5.0, 2.05, -9.85), accentMat, 0, false);
+
+    // ── AFT CROSS-CORRIDOR — crew atmosphere ───────────────────────────────────
+    // Mess table + benches (starboard half)
+    addBox('MessTableTop',  { width: 2.4, height: 0.10, depth: 1.0 }, new Vector3( 6.0, 0.92, -16.0), tableMat, 0, false);
+    addBox('MessTableBase', { width: 0.18, height: 0.9, depth: 0.8 }, new Vector3( 6.0, 0.45, -16.0), cargoBulk, 0, false);
+    addBox('MessBenchN',    { width: 2.0, height: 0.10, depth: 0.4 }, new Vector3( 6.0, 0.50, -14.8), tableMat, 0, false);
+    addBox('MessBenchS',    { width: 2.0, height: 0.10, depth: 0.4 }, new Vector3( 6.0, 0.50, -17.2), tableMat, 0, false);
+    // Locker bank — port aft corridor wall
+    addBox('LockerBank',   { width: 0.28, height: 2.0, depth: 7.0 }, new Vector3(-20.6, 1.0, -16.0), lockerMat, 0, false);
+    // Individual locker doors (vertical seams)
+    for (let i = 0; i < 6; i++) {
+      addBox(`LockerSeam${i}`, { width: 0.32, height: 0.06, depth: 1.0 }, new Vector3(-20.7, 1.1, -12.5 + i * 1.15), accentMat, 0, false);
+    }
+
+    // ── QUARTERMASTER DESK — Sgt. Hendrix (armory port bay) ───────────────────
+    const qmDesk = addBox(
+      'Quartermaster',
+      { width: 3.2, height: 1.1, depth: 1.0 },
+      new Vector3(-13.0, 0.55, -28.5),
+      kioskMat,
+    );
+    qmDesk.metadata = {
+      hudLabel: 'Quartermaster — Sgt. Hendrix',
+      onInteract: () => {
+        window.dispatchEvent(new CustomEvent('openMerchant', { detail: { merchantId: 'quartermaster' } }));
+        document.exitPointerLock();
+      },
+    };
+    // Back-panel riser
+    addBox('QMDeskRiser', { width: 3.2, height: 2.0, depth: 0.18 }, new Vector3(-13.0, 1.0, -29.1), kioskMat, 0, false);
+    // Small terminal on QM desk
+    const qmScreen = MeshBuilder.CreatePlane('QMScreen', { width: 1.2, height: 0.65 }, scene);
+    qmScreen.position.set(-13.0, 1.3, -28.95);
+    qmScreen.rotation.x = -Math.PI / 10;
+    qmScreen.material = screenMat;
+    qmScreen.isPickable = false;
+
     // --- Airlock Row: z -34, full width ---
     const airFloor = MeshBuilder.CreateBox('airlockFloor', { width: SHIP_W, height: 1, depth: 8 }, scene);
     airFloor.position.set(0, -0.5, -38);
@@ -357,6 +461,24 @@ export class ShipScene {
     betaLight.intensity = 0.75;
     betaLight.range = 12;
 
+    // Supply Post — warm golden accent
+    const supplyLight = new PointLight('supplyLight', new Vector3(8, 4, -4), scene);
+    supplyLight.diffuse = new Color3(1.0, 0.88, 0.55);
+    supplyLight.intensity = 0.7;
+    supplyLight.range = 9;
+
+    // Quartermaster — warm amber over armory counter
+    const qmLight = new PointLight('qmLight', new Vector3(-13, 5, -28), scene);
+    qmLight.diffuse = new Color3(1.0, 0.82, 0.52);
+    qmLight.intensity = 0.6;
+    qmLight.range = 9;
+
+    // Notice board — soft green highlight
+    const noticeLight = new PointLight('noticeLight', new Vector3(-5, 4, -10), scene);
+    noticeLight.diffuse = new Color3(0.38, 0.88, 0.55);
+    noticeLight.intensity = 0.42;
+    noticeLight.range = 7;
+
     // ── PLAYER ─────────────────────────────────────────────────────────────────
     const player = new PlayerController(this.game, scene, new Vector3(0, 2, 5));
     this.game.player = player;
@@ -405,6 +527,38 @@ export class ShipScene {
         position: new Vector3(-17.5, 4.15, 14),
         scale: 0.022,
         rotationY: Math.PI * 0.6,
+      }),
+      // Supply post details
+      placeBabylonModel(scene, 'clothFolds.glb', {
+        position: new Vector3(8.3, 1.08, -3.75),
+        scale: 0.08,
+        rotationY: -0.35,
+      }),
+      placeBabylonModel(scene, 'shaderBall.glb', {
+        position: new Vector3(7.4, 1.12, -3.8),
+        scale: 0.06,
+        rotationY: 0.7,
+      }),
+      // Quartermaster desk details
+      placeBabylonModel(scene, 'shaderBall.glb', {
+        position: new Vector3(-12.6, 1.12, -28.25),
+        scale: 0.055,
+        rotationY: -0.9,
+      }),
+      placeBabylonModel(scene, 'BabylonShaderBall_Simple.gltf', {
+        position: new Vector3(-13.4, 1.1, -28.1),
+        scale: 0.036,
+        rotationY: 0.35,
+      }),
+      // Crew space details
+      placeBabylonModel(scene, 'emoji_heart.glb', {
+        position: new Vector3(-5.0, 2.95, -9.72),
+        scale: 0.03,
+        rotationY: Math.PI,
+      }),
+      placeBabylonModel(scene, 'marble.gltf', {
+        position: new Vector3(5.8, 1.02, -16.0),
+        scale: 0.18,
       }),
     ]);
 
