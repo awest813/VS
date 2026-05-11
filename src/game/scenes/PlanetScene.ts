@@ -172,6 +172,7 @@ export class PlanetScene {
       const surge = environmentalSurgeActiveAt(Date.now());
       this.game.raidEnvironmentalSurge = surge;
       ambient.intensity = ambientBase * (surge ? 0.35 : 1);
+      entryLight.intensity = entryLightBase * (surge ? 0.4 : 1);
       hubLight.intensity = hubLightBase * (surge ? 0.4 : 1);
       westLight.intensity = westLightBase * (surge ? 0.42 : 1);
       deepLight.intensity = deepLightBase * (surge ? 0.48 : 1);

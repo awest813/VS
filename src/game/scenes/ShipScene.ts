@@ -21,12 +21,11 @@ import { createIndustrialBump, createShipStarfield, makePbrMetalPanel } from '..
  * ShipScene — the player hub aboard the ICV Relentless, a Meridian-class heavy freighter.
  *
  * Layout (top-down, Z = forward/bow):
- *   z  60 ─ Bow observation bay
- *   z  40 ─ Bridge / ops console
- *   z  10 ─ Mid-ship: main cargo bay (wide, tall)
- *   z -10 ─ Aft cross-corridor
- *   z -22 ─ Armory bay (port) | Engineering alcove (starboard)
- *   z -32 ─ Airlock row: Alpha (port, station/moon) | Beta (starboard, planet outpost)
+ *   z  40 ─ Bow observation window
+ *   z  30 ─ Bridge / ops console
+ *   z  -10 ─ Aft cross-corridor
+ *   z  -22 ─ Armory bay (port) | Engineering alcove (starboard)
+ *   z  -34 to -42 ─ Airlock row: Alpha (port, station/moon) | Beta (starboard, planet outpost)
  */
 export class ShipScene {
   private game: Game;
