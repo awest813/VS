@@ -416,7 +416,6 @@ export class EnemyAI {
     if (this.isDead) return;
     
     this.health -= damage;
-    console.log(`Enemy hit! Health: ${this.health}`);
 
     if (this.health <= 0) {
       this.die();
@@ -425,9 +424,9 @@ export class EnemyAI {
 
   private die() {
     this.isDead = true;
-    console.log("Enemy Died!");
 
-    if (this.game.stateMachine.getState() === GameState.STATION) {
+    const state = this.game.stateMachine.getState();
+    if (state === GameState.STATION || state === GameState.MOON_BASE || state === GameState.PLANET) {
       this.game.enemiesKilledStation++;
       window.dispatchEvent(
         new CustomEvent('raidStationKill', {

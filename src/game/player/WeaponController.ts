@@ -270,28 +270,31 @@ export class WeaponController {
     const result = HitScan.fireRay(this.scene, ray.origin, ray.direction, this.hitscanRange);
 
     if (result.hit) {
-      // Damage logic
-      if (result.pickedMesh?.metadata?.onHit) {
+      const isEnemy = !!result.pickedMesh?.metadata?.onHit;
+      if (isEnemy) {
         const scaledDamage = computeDamageAtDistance(this.archetype, this.damage, result.distance);
-        result.pickedMesh.metadata.onHit(scaledDamage);
+        result.pickedMesh!.metadata.onHit(scaledDamage);
         window.dispatchEvent(new CustomEvent('enemyHit'));
       }
 
-      // Impact effect
       if (result.pickedPoint) {
-        this.createImpact(result.pickedPoint);
+        this.createImpact(result.pickedPoint, isEnemy);
       }
     }
   }
 
-  private createImpact(point: Vector3) {
-    const impact = MeshBuilder.CreateSphere("impact", { diameter: 0.1 }, this.scene);
-    impact.position = point;
+  private createImpact(point: Vector3, isEnemy = false) {
+    const impact = MeshBuilder.CreateSphere("impact", { diameter: isEnemy ? 0.15 : 0.08 }, this.scene);
+    impact.position = point.add(new Vector3(
+      (Math.random() - 0.5) * 0.04,
+      (Math.random() - 0.5) * 0.04,
+      (Math.random() - 0.5) * 0.04
+    ));
     const mat = new StandardMaterial("impactMat", this.scene);
-    mat.emissiveColor = new Color3(1, 1, 0);
+    mat.emissiveColor = isEnemy ? new Color3(1, 0.1, 0.1) : new Color3(1, 0.85, 0.5);
+    mat.backFaceCulling = false;
     impact.material = mat;
-    
-    setTimeout(() => impact.dispose(), 500);
+    setTimeout(() => impact.dispose(), isEnemy ? 350 : 500);
   }
 
   private applyRecoil() {

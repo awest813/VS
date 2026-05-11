@@ -575,6 +575,13 @@ export class ShipScene {
         rotationY: 0,
         useMeshesRoot: false // Dude.babylon is on models root
       }),
+      // Kaelen — Tech Specialist (Engineering Corridor)
+      placeBabylonModel(scene, 'HVGirl.glb', {
+        position: new Vector3(-8.5, 0.05, -12.5),
+        scale: 1.0,
+        rotationY: -Math.PI / 2,
+        useMeshesRoot: true
+      }),
       // Crew member in mess hall
       placeBabylonModel(scene, 'HVGirl.glb', {
         position: new Vector3(6.0, 0.05, -18.2),

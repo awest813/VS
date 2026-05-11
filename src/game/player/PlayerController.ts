@@ -329,21 +329,36 @@ export class PlayerController {
 
     // Effect Dispatch
     if (arch.id === 'flare_chem') {
+      const flareMesh = MeshBuilder.CreateCylinder("flareStick", { height: 0.25, diameter: 0.05 }, this.scene);
+      flareMesh.position = this.mesh.position.clone();
+      const flareMat = new StandardMaterial("flareMat", this.scene);
+      flareMat.emissiveColor = new Color3(1, 0.4, 0.2);
+      flareMesh.material = flareMat;
+
       const light = new PointLight("flareLight", this.mesh.position.clone(), this.scene);
-      light.diffuse = new Color3(1, 0.9, 0.7);
-      light.intensity = 1.8;
-      light.range = 35;
-      setTimeout(() => light.dispose(), arch.durationMs);
+      light.diffuse = new Color3(1, 0.6, 0.3);
+      light.intensity = 2.5;
+      light.range = 45;
+      
+      setTimeout(() => {
+        light.dispose();
+        flareMesh.dispose();
+      }, arch.durationMs);
     } else if (arch.id === 'shield_deploy') {
-      const shield = MeshBuilder.CreateBox("portableShield", { width: 3, height: 2, depth: 0.2 }, this.scene);
-      shield.position = this.mesh.position.add(this.camera.getForwardRay().direction.scale(2));
-      shield.position.y = 1;
+      const shield = MeshBuilder.CreateBox("portableShield", { width: 3.2, height: 2.2, depth: 0.15 }, this.scene);
+      shield.position = this.mesh.position.add(this.camera.getForwardRay().direction.scale(2.5));
+      shield.position.y = 1.1;
       shield.lookAt(this.mesh.position);
       shield.rotation.y += Math.PI;
+
       const mat = new StandardMaterial("shieldMat", this.scene);
+      mat.emissiveColor = new Color3(0.1, 0.4, 1.0);
+      mat.alpha = 0.35;
+      mat.backFaceCulling = false;
+      // Procedural Hex-ish Grid (using emissive and wireframe-ish feel)
       mat.diffuseColor = new Color3(0.2, 0.6, 1.0);
-      mat.alpha = 0.4;
       shield.material = mat;
+
       setTimeout(() => shield.dispose(), arch.durationMs);
     } else if (arch.id === 'sensor_sweep') {
       const sweep = new SensorSweepEffect(this.scene);
@@ -528,7 +543,6 @@ export class PlayerController {
         typeof interactable.metadata?.hudLabel === 'string' ? interactable.metadata.hudLabel : interactable.name;
       this.hoveredInteractable = hud;
       if (this.inputMap['KeyE']) {
-        console.log('Interacted with:', interactable.name);
         this.uiBlipSound.setVolume(AudioMix.uiBlipVolumeInteract);
         this.uiBlipSound.setPlaybackRate(AudioMix.uiBlipRateInteract + Math.random() * 0.06);
         this.uiBlipSound.play();
@@ -555,7 +569,10 @@ export class PlayerController {
   public takeDamage(amount: number) {
     if (this.health <= 0) return;
     this.health = Math.max(0, this.health - amount);
-    console.log(`Player hit! Health: ${this.health}`);
+
+    window.dispatchEvent(new CustomEvent('playerHit', {
+      detail: { amount, healthPct: this.health / this.maxHealth }
+    }));
 
     // Camera shake — guard restore against disposal during the 100ms window (death → scene swap).
     const originalFov = this.camera.fov;
@@ -565,7 +582,6 @@ export class PlayerController {
     }, 100);
 
     if (this.health <= 0) {
-      console.warn('Raid failed — casualty. Salvaged raid backpack is forfeited.');
       window.dispatchEvent(new CustomEvent('raidPlayerDeath'));
       queueMicrotask(() => {
         if (this.game.stateMachine.getState() === GameState.SHIP) return;

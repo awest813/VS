@@ -108,6 +108,59 @@ const App: React.FC<AppProps> = ({ game }) => {
   const [raidFailed, setRaidFailed] = useState(false);
   const [hasSaveData, setHasSaveData] = useState(false);
   const [showNewGameConfirm, setShowNewGameConfirm] = useState(false);
+  const [npcDialogue, setNpcDialogue] = useState<string | null>(null);
+  const [damageVignette, setDamageVignette] = useState(0); // 0-1 intensity
+
+  const DIALOGUE_POOLS: Record<string, { greetings: string[], lore: string[], onBuy: string[] }> = {
+    supply_post: {
+      greetings: [
+        "Need something to stop the bleeding? Or just something to keep the edge off?",
+        "Credit's good here. Just don't tell the Captain about the tax-free status.",
+        "Raid went well, I hope? If not, you'll need more of these."
+      ],
+      lore: [
+        "The Meridian-class was never meant for this sector. We're running on fumes and stubbornness.",
+        "Sgt. Hendrix thinks he's the only one keeping us alive. He forgets who supplies the medkits."
+      ],
+      onBuy: [
+        "Good choice. Don't use it all in one place.",
+        "That's the last of that batch. Use it well.",
+        "Sourced that from a Moon Base wreck. Still works though."
+      ]
+    },
+    quartermaster: {
+      greetings: [
+        "Check your gear twice, die once. What do you need, Operative?",
+        "The armory is always open for those with the credits to back it up.",
+        "Staging a deployment? Make sure you've got enough lead."
+      ],
+      lore: [
+        "Frontier Outpost Alpha was the first to fall. I lost good people there.",
+        "This suit you're wearing... it's seen three other pilots before you. Don't make it four."
+      ],
+      onBuy: [
+        "Maintain it. It'll maintain you.",
+        "High quality. Standard issue for Void Sovereigns.",
+        "Don't waste it on the scenery. Aim for the center mass."
+      ]
+    },
+    tech_specialist: {
+      greetings: [
+        "Scanning your suit... servos are 82% nominal. Could be better.",
+        "Engineering isn't a miracle shop, but for enough credits, I can try.",
+        "Watch your heat signature in the debris field. It's a death trap."
+      ],
+      lore: [
+        "The environmental surge isn't natural. Something out there is drawing power.",
+        "I've been tweaking the reactor core. We've got 15% more thrust, but it's shaky."
+      ],
+      onBuy: [
+        "Installing the bypass now. Should give you more juice.",
+        "Toughened the plating. Try not to test it immediately.",
+        "Optimized the sensor array. You'll see them before they see you."
+      ]
+    }
+  };
 
   const shipOpsDialogRef = useRef<HTMLDivElement>(null);
 
@@ -338,6 +391,22 @@ const App: React.FC<AppProps> = ({ game }) => {
     const onDeath = () => setRaidFailed(true);
     window.addEventListener('raidPlayerDeath', onDeath);
     return () => window.removeEventListener('raidPlayerDeath', onDeath);
+  }, []);
+
+  useEffect(() => {
+    let vignetteTimer = 0;
+    const onPlayerHit = (e: Event) => {
+      const { healthPct } = (e as CustomEvent).detail ?? {};
+      const intensity = healthPct < 0.25 ? 0.85 : healthPct < 0.5 ? 0.55 : 0.35;
+      setDamageVignette(intensity);
+      clearTimeout(vignetteTimer);
+      vignetteTimer = window.setTimeout(() => setDamageVignette(0), 350);
+    };
+    window.addEventListener('playerHit', onPlayerHit);
+    return () => {
+      window.removeEventListener('playerHit', onPlayerHit);
+      clearTimeout(vignetteTimer);
+    };
   }, []);
 
   // Clear the death overlay once the scene returns to ship
@@ -603,6 +672,21 @@ const App: React.FC<AppProps> = ({ game }) => {
         lineHeight: 1.45,
       }}
     >
+      {/* ── DAMAGE VIGNETTE ─────────────────────────────────────────────── */}
+      {damageVignette > 0 && (
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 90,
+            pointerEvents: 'none',
+            background: `radial-gradient(ellipse at center, transparent 35%, rgba(220, 20, 20, ${damageVignette.toFixed(2)}) 100%)`,
+            transition: 'opacity 0.1s ease',
+          }}
+        />
+      )}
+
       {/* ── TITLE SCREEN ────────────────────────────────────────────────── */}
       {gameState === GameState.START_MENU && (
         <div
@@ -1870,12 +1954,12 @@ const App: React.FC<AppProps> = ({ game }) => {
       {gameState === GameState.SHIP && openMerchantId !== null && (() => {
         const isSP   = openMerchantId === 'supply_post';
         const isQM   = openMerchantId === 'quartermaster';
-        const title  = isSP ? "Marta's Surplus" : isQM ? 'Quartermaster — Sgt. Hendrix' : 'Merchant';
-        const flavor = isSP
-          ? "Fresh from the last supply run. Don't ask where I sourced these."
-          : isQM
-          ? "I keep the armory stocked. You keep coming back alive. Deal?"
-          : '';
+        const isTS   = openMerchantId === 'tech_specialist';
+        const title  = isSP ? "Marta's Surplus" : isQM ? 'Quartermaster — Sgt. Hendrix' : isTS ? 'Engineering — Kaelen' : 'Merchant';
+        
+        const pool = DIALOGUE_POOLS[openMerchantId] || { greetings: [""], lore: [""], onBuy: [""] };
+        const displayDialogue = npcDialogue || pool.greetings[0];
+
         const items: { id: string; name: string; cost: number; qty?: number }[] = isSP
           ? [
               { id: 'ammo_9mm', name: 'Ammo ×30',   cost: 20, qty: 30 },
@@ -1892,6 +1976,11 @@ const App: React.FC<AppProps> = ({ game }) => {
               { id: 'ammo_9mm', name: 'Ammo ×30',  cost: 20, qty: 30 },
               { id: 'medkit',   name: 'Medkit',     cost: 50 },
               { id: 'bandage',  name: 'Bandage ×3', cost: 25, qty: 3  },
+            ]
+          : isTS
+          ? [
+              { id: 'scrap_metal', name: 'Scrap Metal Bundle', cost: 120, qty: 5 },
+              { id: 'circuits',     name: 'Circuit Boards',    cost: 200, qty: 2 },
             ]
           : [];
 
@@ -1928,8 +2017,46 @@ const App: React.FC<AppProps> = ({ game }) => {
                 textAlign: 'center',
               }}
             >
-                </p>
-              )}
+              <div style={{ position: 'absolute', top: 12, left: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ fontSize: 9, fontWeight: 800, color: 'rgba(56, 189, 248, 0.4)', letterSpacing: '0.1em' }}>COMMS_LINK: ESTABLISHED</div>
+                <div style={{ display: 'flex', gap: 2 }}>
+                  <div style={{ width: 2, height: 4, background: '#38bdf8' }} />
+                  <div style={{ width: 2, height: 6, background: '#38bdf8' }} />
+                  <div style={{ width: 2, height: 8, background: '#38bdf8' }} />
+                  <div style={{ width: 2, height: 10, background: '#38bdf8' }} />
+                </div>
+              </div>
+
+              <div className="ui-bracket" style={{ width: 64, height: 64, margin: '0 auto 16px', background: 'rgba(15, 23, 42, 0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ fontSize: 24, opacity: 0.5 }}>{isSP ? '📦' : isQM ? '🛡️' : '🔧'}</div>
+                <div style={{ position: 'absolute', inset: 0, background: 'repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(56, 189, 248, 0.05) 1px, rgba(56, 189, 248, 0.05) 2px)', pointerEvents: 'none' }} />
+              </div>
+
+              <p className="ui-eyebrow ui-eyebrow-hub">VNDR / UPLINK</p>
+              <h2 style={{ margin: '0 0 4px 0', fontSize: '1.45rem', fontWeight: 700 }}>{title}</h2>
+              <p style={{ margin: '0 0 24px 0', fontSize: 13, color: 'rgba(160, 175, 200, 0.75)', fontStyle: 'italic', lineHeight: 1.5, minHeight: '3em', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                "{displayDialogue}"
+              </p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginBottom: 20 }}>
+                <button 
+                  onClick={() => {
+                    const lore = pool.lore[Math.floor(Math.random() * pool.lore.length)];
+                    setNpcDialogue(lore);
+                  }}
+                  style={{ padding: '6px 12px', fontSize: 10, fontWeight: 700, background: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.3)', color: '#38bdf8', borderRadius: 4, cursor: 'pointer' }}
+                >
+                  DISCOVER LORE
+                </button>
+                <button 
+                  onClick={() => {
+                    const greet = pool.greetings[Math.floor(Math.random() * pool.greetings.length)];
+                    setNpcDialogue(greet);
+                  }}
+                  style={{ padding: '6px 12px', fontSize: 10, fontWeight: 700, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', borderRadius: 4, cursor: 'pointer' }}
+                >
+                  TALK
+                </button>
+              </div>
               <h2 style={{ color: '#fde68a', margin: '0 0 18px 0', fontSize: 'clamp(1rem, 1.8vw, 1.2rem)', fontFamily: fontMono, fontWeight: 550 }}>¤ {money.toLocaleString()}</h2>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
                 {items.map((item) => (

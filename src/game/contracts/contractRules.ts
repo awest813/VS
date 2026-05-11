@@ -44,6 +44,14 @@ type ContractDefinition = {
     | {
         kind: 'data_retrieval';
         recoveredId: string;
+      }
+    | {
+        kind: 'assassination';
+        targetId: string;
+      }
+    | {
+        kind: 'repair';
+        targetId: string;
       };
 };
 
@@ -131,6 +139,28 @@ const CONTRACT_DEFINITIONS: readonly ContractDefinition[] = [
       recoveredId: 'moon_intel_01',
     },
   },
+  {
+    title: 'HVT: Captain Valerius',
+    description: 'Priority warrant: neutralize the rogue station commander, Captain Valerius. He’s heavily armored and guarded by elite Thornfield salvagers. Extract green to claim the bounty.',
+    reward: 2200,
+    deployZone: 'station_chain',
+    unlockAfterCompleted: 5,
+    objective: {
+      kind: 'assassination',
+      targetId: 'valerius_commander',
+    },
+  },
+  {
+    title: 'Repair Satellite Link',
+    description: 'Technical order: deploy to the planet surface and repair the damaged satellite relay in the research wing. You will need a repair kit from Marta. Extract clean to finalize.',
+    reward: 1100,
+    deployZone: 'planet',
+    unlockAfterCompleted: 3,
+    objective: {
+      kind: 'repair',
+      targetId: 'sat_relay_09',
+    },
+  },
 ] as const;
 
 const CONTRACT_DEFINITION_BY_TITLE = new Map(
@@ -183,6 +213,14 @@ export function contractPayoutEligible(
 
   if (definition.objective.kind === 'data_retrieval') {
     return game?.dataRecoveredIds?.includes(definition.objective.recoveredId) ?? false;
+  }
+
+  if (definition.objective.kind === 'assassination') {
+    return (game as any)?.targetsNeutralizedIds?.includes(definition.objective.targetId) ?? false;
+  }
+
+  if (definition.objective.kind === 'repair') {
+    return (game as any)?.targetsRepairedIds?.includes(definition.objective.targetId) ?? false;
   }
 
   // station_kills
@@ -252,6 +290,20 @@ export function contractProgressSummary(
     return hasData
       ? 'Intel secured in buffer — extract to ship to finalize.'
       : 'Locate secure console and download intelligence data.';
+  }
+
+  if (definition.objective.kind === 'assassination') {
+    const isDone = (game as any)?.targetsNeutralizedIds?.includes(definition.objective.targetId);
+    return isDone
+      ? 'Target neutralized — extract to claim bounty.'
+      : 'Locate and neutralize the High-Value Target.';
+  }
+
+  if (definition.objective.kind === 'repair') {
+    const isDone = (game as any)?.targetsRepairedIds?.includes(definition.objective.targetId);
+    return isDone
+      ? 'Relay repaired — ready for extraction.'
+      : 'Access the relay terminal and complete repairs.';
   }
 
   const requiredKills = definition.objective.requiredKills;
