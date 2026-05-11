@@ -6,6 +6,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { db } from './SaveDB';
 import { mergeAmmoForShipExtract } from './raidExtract';
 import { persistStationRaidExtract } from './stationRaidPersist';
+import { DEFAULT_UPGRADE_STATE } from '../progression/profileProgression';
 import {
   STATION_DEBRIS_CONTRACT_TITLE,
   STATION_DEBRIS_KILLS_REQUIRED,
@@ -50,6 +51,7 @@ describe('Raid full flow (integration)', () => {
         money: 500,
         reputation: 0,
         health: 100,
+        ...DEFAULT_UPGRADE_STATE,
       });
     });
 
@@ -93,6 +95,7 @@ describe('Raid full flow (integration)', () => {
         money: 500,
         reputation: 0,
         health: 100,
+        ...DEFAULT_UPGRADE_STATE,
       });
       await db.stashItems.bulkAdd([
         { itemId: 'rifle_01', quantity: 1, slot: 'loadout' },

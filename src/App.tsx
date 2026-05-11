@@ -4,7 +4,7 @@ import { RAID_MEDKIT_COOLDOWN_MS, RAID_BANDAGE_COOLDOWN_MS } from './game/player
 import { RAID_GADGET_COOLDOWN_MS } from './game/raid/raidGadget';
 import { RAID_LORE_BY_SEGMENT } from './game/level/raidLoreTerminals';
 import { GameState } from './game/StateMachine';
-import { db, StashItem, type PlayerProfile } from './game/persistence/SaveDB';
+import { db, StashItem, type Contract, type PlayerProfile } from './game/persistence/SaveDB';
 import {
   getContractRaidHint,
   contractProgressSummary,
@@ -345,7 +345,7 @@ const App: React.FC<AppProps> = ({ game }) => {
       return;
     }
 
-    let outcome: 'purchased' | 'insufficient' | 'maxed' | 'missing_profile' = 'missing_profile';
+    let outcome = 'missing_profile';
     let nextLevel = 0;
 
     await db.transaction('rw', db.playerProfile, async () => {

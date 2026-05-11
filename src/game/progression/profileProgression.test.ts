@@ -40,15 +40,12 @@ describe('profileProgression', () => {
   });
 
   it('stacks persistent weapon upgrades with loot mods', () => {
-    expect(
-      combineWeaponUpgradeMods(
-        { damageMod: 1.1, fireRateMod: 0.9 },
-        { ...DEFAULT_UPGRADE_STATE, weaponDamageTier: 1, weaponHandlingTier: 2 }
-      )
-    ).toEqual({
-      damageMod: 1.2320000000000002,
-      fireRateMod: 0.7560000000000001,
-    });
+    const mods = combineWeaponUpgradeMods(
+      { damageMod: 1.1, fireRateMod: 0.9 },
+      { ...DEFAULT_UPGRADE_STATE, weaponDamageTier: 1, weaponHandlingTier: 2 }
+    );
+    expect(mods.damageMod).toBeCloseTo(1.232);
+    expect(mods.fireRateMod).toBeCloseTo(0.756);
   });
 
   it('reports upgrade level and unlock thresholds', () => {
